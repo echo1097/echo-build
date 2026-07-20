@@ -1679,6 +1679,20 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+fn set_interactive_terminal_title() {
+    use std::io::{IsTerminal, Write};
+
+    if !std::io::stderr().is_terminal() {
+        return;
+    }
+
+    xai_grok_shell::util::with_locked_stderr(|stderr| {
+        let _ = stderr.write_all(b"\x1b]0;Echo Build\x07");
+        let _ = stderr.flush();
+    });
+}
+
 async fn async_main() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let mut args = PagerArgs::parse_and_apply_cwd()?;
@@ -1740,6 +1754,9 @@ async fn async_main() -> Result<()> {
         && args.single.is_none()
         && args.prompt_json.is_none()
         && args.prompt_file.is_none();
+    if is_interactive {
+        set_interactive_terminal_title();
+    }
     xai_grok_shell::http::set_client_name(if is_interactive {
         xai_grok_workspace::permission::ClientType::GrokPager
     } else {

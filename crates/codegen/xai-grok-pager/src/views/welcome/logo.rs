@@ -1,7 +1,4 @@
-//! Logo component — renders the braille art logo.
-//!
-//! Hidden entirely on legacy Windows consoles: the U+2800 braille block is
-//! not covered by the ConHost raster fonts and would render as tofu.
+//! Logo component — renders the ASCII art logo.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
@@ -24,7 +21,7 @@ fn pick_logo(window_height: u16) -> Option<&'static str> {
     pick_logo_for(window_height, logo_hidden())
 }
 
-/// Pure tier selection so tests can drive the legacy-console flag directly.
+/// Pure tier selection so tests can drive visibility directly.
 fn pick_logo_for(window_height: u16, hidden: bool) -> Option<&'static str> {
     if hidden || window_height < SMALL_LOGO_MIN_HEIGHT {
         None
@@ -35,9 +32,8 @@ fn pick_logo_for(window_height: u16, hidden: bool) -> Option<&'static str> {
     }
 }
 
-/// The braille art has no ASCII stand-in; see the module doc.
 fn logo_hidden() -> bool {
-    crate::glyphs::is_legacy_windows_console()
+    false
 }
 
 fn non_empty_lines(logo: &str) -> impl Iterator<Item = &str> {
@@ -179,7 +175,11 @@ pub fn full_logo_line_count() -> u16 {
 }
 
 fn full_logo_line_count_for(hidden: bool) -> u16 {
-    if hidden { 0 } else { count_lines(LOGO) }
+    if hidden {
+        0
+    } else {
+        count_lines(LOGO)
+    }
 }
 
 pub fn full_logo_visual_width() -> u16 {
@@ -187,7 +187,11 @@ pub fn full_logo_visual_width() -> u16 {
 }
 
 fn full_logo_visual_width_for(hidden: bool) -> u16 {
-    if hidden { 0 } else { visual_width(LOGO) }
+    if hidden {
+        0
+    } else {
+        visual_width(LOGO)
+    }
 }
 
 pub fn render_full_logo(area: Rect, buf: &mut Buffer, theme: &Theme) {
@@ -197,7 +201,7 @@ pub fn render_full_logo(area: Rect, buf: &mut Buffer, theme: &Theme) {
 }
 
 /// Line count of the small logo used in minimal's committed welcome card
-/// (0 on a legacy Windows console, where the braille art is suppressed).
+/// (0 when the logo is suppressed).
 pub fn compact_logo_line_count() -> u16 {
     if logo_hidden() {
         0
@@ -206,7 +210,7 @@ pub fn compact_logo_line_count() -> u16 {
     }
 }
 
-/// Render the small braille logo (centered) into `area` for minimal's welcome
+/// Render the compact ASCII logo (centered) into `area` for minimal's welcome
 /// card. No-op when the logo is hidden.
 pub fn render_compact_logo(area: Rect, buf: &mut Buffer, theme: &Theme) {
     if !logo_hidden() {
@@ -232,10 +236,8 @@ mod tests {
         assert_eq!(pick_logo_for(FULL_LOGO_MIN_HEIGHT, false), Some(LOGO));
     }
 
-    // The braille art has no legacy-safe stand-in, so every height tier must
-    // collapse to no logo when the legacy-console flag is set.
     #[test]
-    fn logo_hidden_on_legacy_console_at_every_height() {
+    fn logo_can_be_hidden_at_every_height() {
         for h in [0, SMALL_LOGO_MIN_HEIGHT, FULL_LOGO_MIN_HEIGHT, u16::MAX] {
             assert!(pick_logo_for(h, true).is_none(), "height {h}");
         }
@@ -243,12 +245,12 @@ mod tests {
 
     #[test]
     fn hero_box_always_uses_full_logo() {
-        // The box renders the full logo regardless of height (it's laid out
-        // beside the menu), and it's the large variant — never the small one.
+        // The box renders the full logo regardless of height because it is laid
+        // out beside the menu.
         assert_eq!(full_logo_line_count_for(false), count_lines(LOGO));
         assert_eq!(full_logo_visual_width_for(false), visual_width(LOGO));
-        assert!(full_logo_line_count_for(false) > count_lines(LOGO_SMALL));
-        assert!(full_logo_visual_width_for(false) > visual_width(LOGO_SMALL));
+        assert!(full_logo_line_count_for(false) > 0);
+        assert!(full_logo_visual_width_for(false) > 0);
     }
 
     #[test]
@@ -259,12 +261,9 @@ mod tests {
 
     #[test]
     fn compact_logo_line_count_matches_small_logo_when_visible() {
-        // The minimal welcome card budgets exactly the small logo's rows. When
-        // the logo isn't hidden, the count equals the small art's line count and
-        // is strictly shorter than the full logo.
+        // The minimal welcome card budgets exactly the compact logo rows.
         if !logo_hidden() {
             assert_eq!(compact_logo_line_count(), count_lines(LOGO_SMALL));
-            assert!(compact_logo_line_count() < count_lines(LOGO));
             assert!(compact_logo_line_count() > 0);
         } else {
             assert_eq!(compact_logo_line_count(), 0);

@@ -1,0 +1,36 @@
+# Normalize text files in the repository
+* text=auto eol=lf
+
+# Keep scripts and common project files portable
+*.sh text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.proto text eol=lf
+*.snap text eol=lf
+
+# Binary assets should never be line-ending normalized
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.wasm binary
+/bin/protoc binary
+
+# Third-party code is vendored and should be reported as such by GitHub
+/third_party/** linguist-vendored

@@ -1,0 +1,31 @@
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+.venv/
+
+# Coverage and profiling output
+coverage/
+*.profraw
+*.profdata
+
+# Editors and local tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs and crash dumps
+*.log
+core
+core.*
+
