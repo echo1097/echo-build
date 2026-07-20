@@ -3,6 +3,26 @@
 //! [`acp::Agent`] trait implementation for [`MvpAgent`].
 //! Co-located child of `mvp_agent` (`use super::*`).
 use super::*;
+
+fn credential_store_startup_error(
+    result: Result<Option<String>, crate::auth::ApiKeyStoreError>,
+) -> Option<String> {
+    match result {
+        Ok(Some(_)) => {
+            tracing::info!("loaded OpenRouter API key from credential store");
+            None
+        }
+        Ok(None) => {
+            tracing::info!("OpenRouter API key is not configured");
+            None
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "OpenRouter credential store is unavailable");
+            Some(error.to_string())
+        }
+    }
+}
+
 #[async_trait::async_trait(?Send)]
 impl acp::Agent for MvpAgent {
     /// In the meta, we provide
@@ -23,11 +43,9 @@ impl acp::Agent for MvpAgent {
         arguments: acp::InitializeRequest,
     ) -> Result<acp::InitializeResponse, acp::Error> {
         tracing::debug!(target : "sampling_log", "Received initialize request");
-        match crate::auth::load_api_key(&crate::util::grok_home::grok_home()) {
-            Ok(Some(_)) => tracing::info!("loaded OpenRouter API key from credential store"),
-            Ok(None) => tracing::info!("OpenRouter API key is not configured"),
-            Err(error) => tracing::warn!(error = %error, "OpenRouter credential store is unavailable"),
-        }
+        let credential_store_error = credential_store_startup_error(
+            crate::auth::load_api_key(&crate::util::grok_home::grok_home()),
+        );
         self.auth_manager.clear_in_memory();
         xai_grok_telemetry::unified_log::info("agent initialized", None, None);
         self.start_subagent_coordinator();
@@ -313,7 +331,8 @@ impl acp::Agent for MvpAgent {
                         .command_availability()), "cancelRewind" : self.cfg.borrow()
                         .resolve_cancel_rewind().value, "sessionRecap" : self.cfg
                         .borrow().is_session_recap_enabled(), "voiceMode" : self.cfg
-                        .borrow().is_voice_mode_enabled(), }
+                        .borrow().is_voice_mode_enabled(), "credentialStoreError" :
+                        credential_store_error, }
                     )
                         .as_object()
                         .cloned()
@@ -3731,5 +3750,22 @@ impl acp::Agent for MvpAgent {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod credential_store_startup_tests {
+    use super::credential_store_startup_error;
+
+    #[test]
+    fn unavailable_store_becomes_sanitized_initialize_metadata() {
+        let error = crate::auth::ApiKeyStoreError::CredentialStore("locked".to_owned());
+
+        let startup_error = credential_store_startup_error(Err(error));
+
+        assert_eq!(
+            startup_error.as_deref(),
+            Some("the operating system credential store is unavailable: locked")
+        );
     }
 }

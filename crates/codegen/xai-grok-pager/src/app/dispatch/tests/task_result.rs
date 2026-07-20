@@ -2085,6 +2085,24 @@ fn logout_failure_returns_to_key_entry_with_error() {
     ));
 }
 
+#[test]
+fn credential_store_startup_failure_is_visible_in_key_entry() {
+    let mut app = test_app_with_agent();
+    let _ = dispatch(Action::Login, &mut app);
+    let error = "the operating system credential store is unavailable: locked".to_owned();
+
+    crate::app::event_loop::apply_startup_credential_store_error(&mut app, Some(error.clone()));
+
+    assert!(matches!(
+        app.auth_state,
+        AuthState::ApiKeyEntry {
+            saving: false,
+            error: Some(ref current_error),
+            ..
+        } if current_error == &error
+    ));
+}
+
 /// `apply_setting_rollback` on a known key reverts the in-memory
 /// cache without emitting any new effects.
 #[test]

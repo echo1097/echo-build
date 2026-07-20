@@ -8,6 +8,7 @@
 
 pub mod conversation;
 pub mod doom_loop;
+pub mod endpoint_policy;
 pub mod error;
 pub mod messages;
 pub mod serde_helpers;

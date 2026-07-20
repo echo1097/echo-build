@@ -9,6 +9,7 @@
 .venv/
 notes.md
 todo.md
+todo/
 
 # Coverage and profiling output
 coverage/

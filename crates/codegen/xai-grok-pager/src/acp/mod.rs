@@ -78,6 +78,8 @@ pub struct AcpConnection {
     /// Auth response metadata from eager authentication (cached token / API key).
     /// Contains `team_name`, etc. `None` when interactive login is required.
     pub auth_meta: Option<serde_json::Value>,
+    /// Sanitized startup error when the operating-system credential store is unavailable.
+    pub credential_store_error: Option<String>,
     /// Leader connection status. `Some` only when connected via leader.
     pub leader_status_rx: Option<tokio::sync::watch::Receiver<leader_bridge::ConnectionStatus>>,
     /// Whether cancel-rewind is enabled (resolved by shell from config layers).
@@ -202,6 +204,7 @@ pub async fn connect(cancel: &CancellationToken, flags: ConnectFlags) -> Result<
         available_commands,
         cancel_rewind_enabled,
         session_recap_available,
+        credential_store_error,
     ) = initialize(&tx, &flags).await?;
 
     // Determine whether interactive login is needed.
@@ -233,6 +236,7 @@ pub async fn connect(cancel: &CancellationToken, flags: ConnectFlags) -> Result<
         login_method_id,
         auth_start_mode,
         auth_meta,
+        credential_store_error,
         leader_status_rx: None,
         cancel_rewind_enabled,
         session_recap_available,
@@ -315,6 +319,7 @@ pub async fn connect_via_leader(
         available_commands,
         cancel_rewind_enabled,
         session_recap_available,
+        credential_store_error,
     ) = initialize(&tx, &flags).await?;
 
     let (needs_login, login_label, login_method_id, auth_start_mode) =
@@ -359,6 +364,7 @@ pub async fn connect_via_leader(
         login_method_id,
         auth_start_mode,
         auth_meta,
+        credential_store_error,
         leader_status_rx: Some(status_rx),
         cancel_rewind_enabled,
         session_recap_available,
@@ -489,6 +495,7 @@ async fn initialize(
     Vec<acp::AvailableCommand>,
     bool,
     bool,
+    Option<String>,
 )> {
     let req = acp::InitializeRequest::new(acp::ProtocolVersion::V1)
         .client_capabilities(
@@ -532,6 +539,7 @@ async fn initialize(
 
     let session_recap_available = parse_session_recap_available(resp.meta.as_ref());
     let default_auth_method_id = parse_default_auth_method_id(resp.meta.as_ref());
+    let credential_store_error = parse_credential_store_error(resp.meta.as_ref());
 
     Ok((
         models,
@@ -541,7 +549,16 @@ async fn initialize(
         available_commands,
         cancel_rewind_enabled,
         session_recap_available,
+        credential_store_error,
     ))
+}
+
+/// Parse the sanitized keychain startup error advertised by Echo shell.
+pub fn parse_credential_store_error(meta: Option<&acp::Meta>) -> Option<String> {
+    meta.and_then(|m| m.get("credentialStoreError"))
+        .and_then(|v| v.as_str())
+        .filter(|message| !message.is_empty())
+        .map(str::to_owned)
 }
 
 /// Parse `availableCommands` from an `InitializeResponse.meta` value.
@@ -831,6 +848,19 @@ mod tests {
     fn parse_session_recap_available_non_bool_defaults_off() {
         let meta = serde_json::json!({ "sessionRecap": "yes" });
         assert!(!parse_session_recap_available(meta.as_object()));
+    }
+
+    #[test]
+    fn parse_credential_store_error_surfaces_sanitized_startup_failure() {
+        let meta = serde_json::json!({
+            "credentialStoreError": "the operating system credential store is unavailable: locked"
+        });
+
+        assert_eq!(
+            parse_credential_store_error(meta.as_object()).as_deref(),
+            Some("the operating system credential store is unavailable: locked")
+        );
+        assert_eq!(parse_credential_store_error(None), None);
     }
 
     // ── startup_auth_metadata ──────────────────────────────────────

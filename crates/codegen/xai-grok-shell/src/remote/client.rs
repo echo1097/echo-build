@@ -660,21 +660,6 @@ pub async fn fetch_login_device_flow(cli_chat_proxy_base_url: &str) -> Option<bo
 /// Default context window (256k) when the remote endpoint doesn't provide one.
 pub(crate) const DEFAULT_CONTEXT_WINDOW: u64 = 256_000;
 
-fn openrouter_endpoint_allowed(base_url: &str) -> bool {
-    let Ok(url) = reqwest::Url::parse(base_url) else {
-        return false;
-    };
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    let host = host.to_ascii_lowercase();
-    host == "openrouter.ai"
-        || host == "localhost"
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
-}
-
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Vec<serde_json::Value>,
@@ -732,12 +717,14 @@ pub(crate) fn fetch_models_blocking(
     let client = crate::http::shared_blocking_client();
     let source = ListModelsEndpoint::from_endpoints(endpoints, fetch_auth);
     let inference_base_url = endpoints.resolve_inference_base_url();
-    if !openrouter_endpoint_allowed(&source.url)
-        || !openrouter_endpoint_allowed(&inference_base_url)
+    if xai_grok_sampling_types::endpoint_policy::validate_credential_endpoint(&source.url).is_err()
+        || xai_grok_sampling_types::endpoint_policy::validate_credential_endpoint(
+            &inference_base_url,
+        )
+        .is_err()
     {
         return Err(BackendError::Auth(
-            "OpenRouter credentials may only be sent to OpenRouter or a loopback test server"
-                .into(),
+            xai_grok_sampling_types::endpoint_policy::CREDENTIAL_ENDPOINT_REQUIREMENT.into(),
         ));
     }
     tracing::info!("Fetching models from {}", source.url);
@@ -1586,11 +1573,46 @@ mod tests {
 
     #[test]
     fn legacy_provider_urls_are_rejected_before_authentication() {
-        assert!(!openrouter_endpoint_allowed("https://api.x.ai/v1"));
-        assert!(!openrouter_endpoint_allowed("https://code.grok.com/models"));
-        assert!(!openrouter_endpoint_allowed("https://example.com/v1"));
-        assert!(openrouter_endpoint_allowed("https://openrouter.ai/api/v1"));
-        assert!(openrouter_endpoint_allowed("http://127.0.0.1:3000"));
+        let allowed = xai_grok_sampling_types::endpoint_policy::validate_credential_endpoint;
+        assert!(allowed("https://api.x.ai/v1").is_err());
+        assert!(allowed("https://code.grok.com/models").is_err());
+        assert!(allowed("https://example.com/v1").is_err());
+        assert!(allowed("http://openrouter.ai/api/v1").is_err());
+        assert!(allowed("ftp://openrouter.ai/api/v1").is_err());
+        assert!(allowed("https://openrouter.ai.example.com/api/v1").is_err());
+        assert!(allowed("https://user@openrouter.ai/api/v1").is_err());
+        assert!(allowed("https://openrouter.ai/api/v1").is_ok());
+        assert!(allowed("http://127.0.0.1:3000").is_ok());
+        assert!(allowed("http://[::1]:3000").is_ok());
+        assert!(allowed("http://localhost:3000").is_ok());
+    }
+
+    #[test]
+    fn rejected_model_catalog_endpoint_sends_no_request_or_authorization_header() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let rejected_url = format!("http://0.0.0.0:{port}/models");
+        let endpoints = endpoints(
+            "https://openrouter.ai/api/v1",
+            Some("https://openrouter.ai/api/v1"),
+            Some(&rejected_url),
+        );
+
+        let error = match fetch_models_blocking(
+            &endpoints,
+            None,
+            crate::agent::models::ModelFetchAuth::ApiKey,
+        ) {
+            Ok(_) => panic!("non-loopback model endpoint must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, BackendError::Auth(_)));
+        assert!(matches!(
+            listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
     }
     #[test]
     fn parse_model_field_takes_priority_over_id() {

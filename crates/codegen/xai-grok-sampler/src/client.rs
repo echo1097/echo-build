@@ -20,6 +20,7 @@ use reqwest::header::{
 };
 use serde::Serialize;
 
+use xai_grok_sampling_types::endpoint_policy::validate_credential_endpoint;
 use xai_grok_sampling_types::error::{try_parse_stream_error, user_facing_api_error_message};
 use xai_grok_sampling_types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ConversationRequest,
@@ -391,9 +392,9 @@ impl SamplingClient {
     /// pre-computes the default request headers. This does not perform
     /// any network I/O.
     pub fn new(config: SamplerConfig) -> Result<Self> {
-        if !openrouter_endpoint_allowed(&config.base_url) {
+        if validate_credential_endpoint(&config.base_url).is_err() {
             return Err(SamplingError::InvalidConfiguration(
-                "OpenRouter credentials may only be sent to OpenRouter or a loopback test server",
+                xai_grok_sampling_types::endpoint_policy::CREDENTIAL_ENDPOINT_REQUIREMENT,
             ));
         }
 
@@ -1725,30 +1726,6 @@ impl SamplingClient {
     }
 }
 
-fn openrouter_endpoint_allowed(base_url: &str) -> bool {
-    let Ok(url) = reqwest::Url::parse(base_url) else {
-        return false;
-    };
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    let host = host.to_ascii_lowercase();
-    if host == "openrouter.ai" || host == "localhost" {
-        return true;
-    }
-    if host
-        .parse::<std::net::IpAddr>()
-        .is_ok_and(|address| address.is_loopback())
-    {
-        return true;
-    }
-    #[cfg(test)]
-    if host.ends_with(".test") {
-        return true;
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1758,7 +1735,7 @@ mod tests {
     fn minimal_config() -> SamplerConfig {
         SamplerConfig {
             api_key: Some("test-key".to_string()),
-            base_url: "https://example.test".to_string(),
+            base_url: "http://127.0.0.1:1".to_string(),
             model: "test-model".to_string(),
             max_completion_tokens: None,
             temperature: None,
@@ -1934,13 +1911,58 @@ mod tests {
 
     #[test]
     fn new_rejects_legacy_provider_hosts_before_request_construction() {
-        for base_url in ["https://api.x.ai/v1", "https://code.grok.com/v1"] {
+        for base_url in [
+            "https://api.x.ai/v1",
+            "https://code.grok.com/v1",
+            "http://openrouter.ai/api/v1",
+            "ftp://openrouter.ai/api/v1",
+            "https://openrouter.ai.example.com/api/v1",
+            "https://user@openrouter.ai/api/v1",
+            "http://192.168.1.10:3000",
+        ] {
             let cfg = SamplerConfig {
                 base_url: base_url.to_string(),
                 ..minimal_config()
             };
             let error = SamplingClient::new(cfg).expect_err("legacy host must be rejected");
             assert!(matches!(error, SamplingError::InvalidConfiguration(_)));
+        }
+    }
+
+    #[test]
+    fn rejected_inference_endpoint_sends_no_request_or_authorization_header() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let cfg = SamplerConfig {
+            base_url: format!("http://0.0.0.0:{port}"),
+            api_key: Some("must-not-leave-process".to_owned()),
+            ..minimal_config()
+        };
+
+        let error = SamplingClient::new(cfg).expect_err("non-loopback endpoint must be rejected");
+
+        assert!(matches!(error, SamplingError::InvalidConfiguration(_)));
+        assert!(matches!(
+            listener.accept(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
+    }
+
+    #[test]
+    fn new_accepts_production_https_and_loopback_endpoints() {
+        for base_url in [
+            "https://openrouter.ai/api/v1",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+            "http://localhost:3000",
+        ] {
+            let cfg = SamplerConfig {
+                base_url: base_url.to_string(),
+                ..minimal_config()
+            };
+
+            SamplingClient::new(cfg).expect("approved endpoint should construct");
         }
     }
 

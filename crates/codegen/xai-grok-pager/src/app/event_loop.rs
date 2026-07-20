@@ -879,7 +879,8 @@ pub(crate) async fn run(
         method.id().0.as_ref() == xai_grok_shell::agent::auth_method::XAI_API_KEY_METHOD_ID
     });
     let force_login = args.force_login;
-    let needs_interactive_login = !has_api_key || force_login;
+    let needs_interactive_login =
+        connection.credential_store_error.is_some() || !has_api_key || force_login;
     if needs_interactive_login {
         app.welcome_prompt_focused = false;
 
@@ -898,6 +899,8 @@ pub(crate) async fn run(
     } else {
         vec![]
     };
+
+    apply_startup_credential_store_error(&mut app, connection.credential_store_error);
 
     if let Some(meta) = connection.auth_meta.as_ref() {
         match serde_json::from_value::<xai_grok_shell::auth::AuthMeta>(meta.clone()) {
@@ -3407,6 +3410,17 @@ pub(super) fn is_bare_esc_press(ev: &Event) -> bool {
             && ke.kind == KeyEventKind::Press
             && ke.modifiers == KeyModifiers::NONE
     )
+}
+
+pub(super) fn apply_startup_credential_store_error(
+    app: &mut AppView,
+    startup_error: Option<String>,
+) {
+    if let Some(startup_error) = startup_error
+        && let AuthState::ApiKeyEntry { error, .. } = &mut app.auth_state
+    {
+        *error = Some(startup_error);
+    }
 }
 
 /// Merge `Event::Paste` fragments and interleaved key events into a

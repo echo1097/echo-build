@@ -36,22 +36,19 @@ async fn handle_set_api_key(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResu
     let grok_home = crate::util::grok_home::grok_home();
     if let Some(k) = key {
         if k.is_empty() {
-            crate::auth::delete_api_key()
-                .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-            crate::auth::clear_api_key_strict(&grok_home)
-                .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
             agent.sampling_config.borrow_mut().api_key = None;
+            crate::auth::delete_api_key_and_legacy(&grok_home)
+                .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
         } else {
+            agent.sampling_config.borrow_mut().api_key = None;
             crate::auth::save_api_key(&grok_home, k)
                 .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
             agent.sampling_config.borrow_mut().api_key = Some(k.to_owned());
         }
     } else {
-        crate::auth::delete_api_key()
-            .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-        crate::auth::clear_api_key_strict(&grok_home)
-            .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
         agent.sampling_config.borrow_mut().api_key = None;
+        crate::auth::delete_api_key_and_legacy(&grok_home)
+            .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
     }
     agent.models_manager.on_auth_changed().await;
     ExtMethodResult::success(serde_json::json!({ "ok": true }))
@@ -63,12 +60,9 @@ async fn handle_logout(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     let _ = args;
     agent.interactive_auth.cancel();
     agent.auth_manager.clear_in_memory();
-    crate::auth::delete_api_key()
-        .map_err(|e| acp::Error::internal_error().data(format!("failed to clear API key: {e}")))?;
-    crate::auth::clear_api_key_strict(&crate::util::grok_home::grok_home()).map_err(|e| {
-        acp::Error::internal_error().data(format!("failed to clear legacy API key: {e}"))
-    })?;
     agent.sampling_config.borrow_mut().api_key = None;
+    crate::auth::delete_api_key_and_legacy(&crate::util::grok_home::grok_home())
+        .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
     let api_key_still_set = crate::agent::auth_method::has_xai_api_key_env();
     // `auth.lifecycle` (not `auth`) avoids colliding with the pre-existing
     // per-request `AuthManager::auth()` `#[instrument]` span.

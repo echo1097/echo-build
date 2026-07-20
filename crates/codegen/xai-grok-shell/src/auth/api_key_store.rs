@@ -1,4 +1,4 @@
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 
 use thiserror::Error;
 
@@ -6,6 +6,7 @@ const KEYRING_SERVICE: &str = "echo-build";
 const KEYRING_ACCOUNT: &str = "openrouter-api-key";
 
 static CACHED_API_KEY: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+static CREDENTIAL_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Error)]
 pub enum ApiKeyStoreError {
@@ -13,8 +14,12 @@ pub enum ApiKeyStoreError {
     CredentialStore(String),
     #[error("the stored OpenRouter API key is not valid UTF-8")]
     InvalidUtf8,
-    #[error("the legacy plaintext API key could not be removed: {0}")]
+    #[error(
+        "the API key was saved securely, but the legacy plaintext API key could not be removed: {0}"
+    )]
     LegacyCleanup(#[source] std::io::Error),
+    #[error("the legacy plaintext API key could not be removed during logout: {0}")]
+    LegacyDelete(#[source] std::io::Error),
 }
 
 trait CredentialStore {
@@ -86,7 +91,44 @@ fn delete_with(store: &impl CredentialStore) -> Result<(), ApiKeyStoreError> {
     store.delete()
 }
 
+fn delete_all_with(
+    store: &impl CredentialStore,
+    grok_home: &std::path::Path,
+) -> Result<(), ApiKeyStoreError> {
+    let secure_delete = delete_with(store);
+    let legacy_delete = super::storage::clear_api_key_strict(grok_home);
+
+    secure_delete?;
+    legacy_delete.map_err(ApiKeyStoreError::LegacyDelete)
+}
+
+fn save_serialized_with(
+    store: &impl CredentialStore,
+    grok_home: &std::path::Path,
+    api_key: &str,
+    operation_lock: &Mutex<()>,
+) -> Result<(), ApiKeyStoreError> {
+    let _operation = operation_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    save_with(store, grok_home, api_key)
+}
+
+fn delete_all_serialized_with(
+    store: &impl CredentialStore,
+    grok_home: &std::path::Path,
+    operation_lock: &Mutex<()>,
+) -> Result<(), ApiKeyStoreError> {
+    let _operation = operation_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    delete_all_with(store, grok_home)
+}
+
 pub fn load_api_key(grok_home: &std::path::Path) -> Result<Option<String>, ApiKeyStoreError> {
+    let _operation = CREDENTIAL_OPERATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     cache_key(None);
     let api_key = load_with(&SystemCredentialStore)?;
     if api_key.is_some() {
@@ -97,6 +139,9 @@ pub fn load_api_key(grok_home: &std::path::Path) -> Result<Option<String>, ApiKe
 }
 
 pub fn save_api_key(grok_home: &std::path::Path, api_key: &str) -> Result<(), ApiKeyStoreError> {
+    let _operation = CREDENTIAL_OPERATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     cache_key(None);
     save_with(&SystemCredentialStore, grok_home, api_key)?;
     cache_key(Some(api_key.to_owned()));
@@ -104,9 +149,20 @@ pub fn save_api_key(grok_home: &std::path::Path, api_key: &str) -> Result<(), Ap
 }
 
 pub fn delete_api_key() -> Result<(), ApiKeyStoreError> {
+    let _operation = CREDENTIAL_OPERATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     cache_key(None);
     delete_with(&SystemCredentialStore)?;
     Ok(())
+}
+
+pub fn delete_api_key_and_legacy(grok_home: &std::path::Path) -> Result<(), ApiKeyStoreError> {
+    let _operation = CREDENTIAL_OPERATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache_key(None);
+    delete_all_with(&SystemCredentialStore, grok_home)
 }
 
 pub fn cached_api_key() -> Option<String> {
@@ -119,7 +175,7 @@ pub fn cached_api_key() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Condvar, Mutex};
 
     use super::*;
 
@@ -204,8 +260,23 @@ mod tests {
         let store = MockStore::fail_with("locked");
         let home = tempfile::tempdir().unwrap();
 
+        assert!(load_with(&store).is_err());
         assert!(save_with(&store, home.path(), "never-written").is_err());
+        assert!(delete_with(&store).is_err());
         assert!(!home.path().join("auth.json").exists());
+    }
+
+    #[test]
+    fn unavailable_store_errors_never_include_key_material() {
+        let store = MockStore::fail_with("locked");
+        let home = tempfile::tempdir().unwrap();
+        let secret = "do-not-print-this-key";
+
+        let error = save_with(&store, home.path(), secret)
+            .unwrap_err()
+            .to_string();
+
+        assert!(!error.contains(secret));
     }
 
     #[test]
@@ -245,5 +316,115 @@ mod tests {
             super::super::storage::read_auth_json(&home.path().join("auth.json")).unwrap();
         assert!(!remaining.contains_key(super::super::model::API_KEY_SCOPE));
         assert_eq!(remaining.get("keep-me").unwrap().key, "session-token");
+    }
+
+    #[test]
+    fn secure_save_reports_legacy_cleanup_as_partial_success() {
+        let store = MockStore::default();
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("auth.json"), b"not json").unwrap();
+
+        let error = save_with(&store, home.path(), "secure-key").unwrap_err();
+
+        assert!(matches!(error, ApiKeyStoreError::LegacyCleanup(_)));
+        assert!(error.to_string().contains("saved securely"));
+        assert_eq!(load_with(&store).unwrap().as_deref(), Some("secure-key"));
+    }
+
+    struct BlockingSaveStore {
+        secret: Mutex<Option<Vec<u8>>>,
+        save_started: Condvar,
+        save_state: Mutex<(bool, bool)>,
+    }
+
+    impl BlockingSaveStore {
+        fn new() -> Self {
+            Self {
+                secret: Mutex::new(None),
+                save_started: Condvar::new(),
+                save_state: Mutex::new((false, false)),
+            }
+        }
+
+        fn wait_for_save(&self) {
+            let state = self.save_state.lock().unwrap();
+            drop(
+                self.save_started
+                    .wait_while(state, |(started, _)| !*started)
+                    .unwrap(),
+            );
+        }
+
+        fn release_save(&self) {
+            let mut state = self.save_state.lock().unwrap();
+            state.1 = true;
+            self.save_started.notify_all();
+        }
+    }
+
+    impl CredentialStore for BlockingSaveStore {
+        fn load(&self) -> Result<Option<Vec<u8>>, ApiKeyStoreError> {
+            Ok(self.secret.lock().unwrap().clone())
+        }
+
+        fn save(&self, secret: &[u8]) -> Result<(), ApiKeyStoreError> {
+            let mut state = self.save_state.lock().unwrap();
+            state.0 = true;
+            self.save_started.notify_all();
+            drop(
+                self.save_started
+                    .wait_while(state, |(_, released)| !*released)
+                    .unwrap(),
+            );
+            *self.secret.lock().unwrap() = Some(secret.to_vec());
+            Ok(())
+        }
+
+        fn delete(&self) -> Result<(), ApiKeyStoreError> {
+            *self.secret.lock().unwrap() = None;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn concurrent_save_then_logout_finishes_with_no_key() {
+        let store = Arc::new(BlockingSaveStore::new());
+        let operation_lock = Arc::new(Mutex::new(()));
+        let home = tempfile::tempdir().unwrap();
+        let home_path = Arc::new(home.path().to_path_buf());
+
+        let save_store = store.clone();
+        let save_lock = operation_lock.clone();
+        let save_home = home_path.clone();
+        let save = std::thread::spawn(move || {
+            save_serialized_with(
+                save_store.as_ref(),
+                save_home.as_ref(),
+                "concurrent-key",
+                save_lock.as_ref(),
+            )
+        });
+
+        store.wait_for_save();
+
+        let logout_store = store.clone();
+        let logout_lock = operation_lock.clone();
+        let logout_home = home_path.clone();
+        let (logout_started, logout_waiting) = std::sync::mpsc::channel();
+        let logout = std::thread::spawn(move || {
+            logout_started.send(()).unwrap();
+            delete_all_serialized_with(
+                logout_store.as_ref(),
+                logout_home.as_ref(),
+                logout_lock.as_ref(),
+            )
+        });
+
+        logout_waiting.recv().unwrap();
+        store.release_save();
+        save.join().unwrap().unwrap();
+        logout.join().unwrap().unwrap();
+
+        assert_eq!(load_with(store.as_ref()).unwrap(), None);
     }
 }

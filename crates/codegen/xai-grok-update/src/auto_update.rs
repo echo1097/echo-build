@@ -29,20 +29,13 @@ const MSG_AUTO_UPDATE_BACKGROUND: &str = "Auto-update running in background.";
 const MSG_RUN_UPDATE_MANUAL: &str = "Run `grok update` to get the latest version.";
 /// Manual-install one-liner for this platform's bootstrap installer.
 fn manual_install_cmd() -> &'static str {
-    if cfg!(windows) {
-        "irm https://x.ai/cli/install.ps1 | iex"
-    } else {
-        "curl -fsSL https://x.ai/cli/install.sh | bash"
-    }
+    crate::version::UPDATE_CHANNEL_UNAVAILABLE
 }
 
 /// Build a reinstall hint for a known installer type.
 fn reinstall_hint(installer: &str) -> String {
-    match installer {
-        "npm" => "Please reinstall via npm:\n  npm i -g @xai-official/grok".to_string(),
-        "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo xai-org-shared/grok-build --pattern 'grok-*' --output grok && chmod +x grok".to_string(),
-        _ => format!("Please reinstall via:\n  {}", manual_install_cmd()),
-    }
+    let _ = installer;
+    manual_install_cmd().to_string()
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -101,11 +94,23 @@ pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<
 }
 
 pub async fn check_update_status(update_config: &UpdateConfig) -> UpdateStatus {
-    let installer = get_installer().await.map(|value| value.to_string());
     let current_version = get_installed_grok_version();
     let current_config = config::load_config().await;
     let auto_update = current_config.cli.auto_update;
     let channel = update_config.channel.clone();
+
+    return UpdateStatus {
+        current_version,
+        latest_version: None,
+        update_available: false,
+        installer: None,
+        channel,
+        auto_update,
+        error: Some(crate::version::UPDATE_CHANNEL_UNAVAILABLE.to_string()),
+    };
+
+    #[allow(unreachable_code)]
+    let installer = get_installer().await.map(|value| value.to_string());
 
     let Some(ref inst) = installer else {
         return UpdateStatus {
@@ -294,6 +299,9 @@ fn env_installer() -> Option<&'static str> {
 }
 
 pub async fn get_installer() -> Option<&'static str> {
+    return None;
+
+    #[allow(unreachable_code)]
     if let Some(i) = env_installer() {
         return Some(i);
     }
@@ -2173,7 +2181,7 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
     warn_if_other_grok_processes_running();
 
     let version_arg = match target {
-        Some(ver) => format!("@xai-official/grok@{ver}"),
+        Some(ver) => format!("{}@{ver}", crate::version::NPM_PACKAGE),
         None => {
             // All current callers resolve the version via get_latest_version
             // (which applies max(stable, alpha) for the alpha channel) before
@@ -2184,7 +2192,8 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
                 "install_npm called without a resolved version, falling back to dist-tag"
             );
             format!(
-                "@xai-official/grok@{}",
+                "{}@{}",
+                crate::version::NPM_PACKAGE,
                 if channel == "alpha" {
                     "alpha"
                 } else {
@@ -2263,6 +2272,10 @@ pub async fn run_update(
     channel_switch: Option<&str>,
     update_config: &mut UpdateConfig,
 ) -> Result<Option<String>> {
+    let _ = (force, pinned_version, channel_switch, &*update_config);
+    anyhow::bail!(crate::version::UPDATE_CHANNEL_UNAVAILABLE);
+
+    #[allow(unreachable_code)]
     apply_channel_switch(channel_switch, update_config).await;
     let installer = match get_installer().await {
         Some(i) => i,
@@ -3445,44 +3458,21 @@ mod tests {
     // ──────────────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_reinstall_hint_npm_mentions_npm_command() {
+    fn test_reinstall_hint_npm_reports_unconfigured_echo_channel() {
         let hint = reinstall_hint("npm");
-        assert!(hint.contains("npm i -g"), "should suggest npm i -g: {hint}");
-        assert!(
-            hint.contains("@xai-official/grok"),
-            "should name the package: {hint}"
-        );
+        assert_eq!(hint, crate::version::UPDATE_CHANNEL_UNAVAILABLE);
     }
 
     #[test]
-    fn test_reinstall_hint_gh_release_mentions_gh_command() {
+    fn test_reinstall_hint_gh_release_reports_unconfigured_echo_channel() {
         let hint = reinstall_hint("gh-release");
-        assert!(
-            hint.contains("gh release download"),
-            "should suggest gh release download: {hint}"
-        );
-        assert!(
-            hint.contains("xai-org-shared/grok-build"),
-            "should name the repo: {hint}"
-        );
+        assert_eq!(hint, crate::version::UPDATE_CHANNEL_UNAVAILABLE);
     }
 
     #[test]
-    fn test_reinstall_hint_internal_mentions_platform_installer() {
+    fn test_reinstall_hint_internal_reports_unconfigured_echo_channel() {
         let hint = reinstall_hint("internal");
-        if cfg!(windows) {
-            assert!(hint.contains("irm"), "should suggest irm install: {hint}");
-            assert!(
-                hint.contains("install.ps1"),
-                "should reference install.ps1: {hint}"
-            );
-        } else {
-            assert!(hint.contains("curl"), "should suggest curl install: {hint}");
-            assert!(
-                hint.contains("install.sh"),
-                "should reference install.sh: {hint}"
-            );
-        }
+        assert_eq!(hint, crate::version::UPDATE_CHANNEL_UNAVAILABLE);
     }
 
     #[test]

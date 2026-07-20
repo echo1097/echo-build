@@ -10,21 +10,17 @@ use xai_grok_shell::env::GrokBuildEnvironment;
 use xai_grok_shell::util::grok_home::grok_home;
 
 const TTL_SECONDS_BEFORE_AUTO_UPDATE: Duration = Duration::from_secs(60 * 30);
-const NPM_PACKAGE: &str = "@xai-official/grok";
-pub const GH_RELEASE_REPO: &str = "xai-org-shared/grok-build";
+pub(crate) const NPM_PACKAGE: &str = "echo-build-channel-not-configured";
+pub const GH_RELEASE_REPO: &str = "echo-build-channel-not-configured";
 
-/// Primary CLI base URL: Cloudflare-fronted x.ai endpoint with edge caching
-/// for binaries and origin-respecting no-cache for channel pointers.
-pub(crate) const CLI_BASE_URL_PRIMARY: &str = "https://x.ai/cli";
+/// Echo release origins stay empty until an owned channel is wired in Phase 5.
+pub(crate) const CLI_BASE_URLS: &[&str] = &[];
 
-/// Fallback CLI base URL: direct GCS, used when the primary is unreachable
-/// (Cloudflare outage, regional CF egress issue, DNS hijack, etc.).
-pub(crate) const CLI_BASE_URL_FALLBACK: &str =
-    "https://storage.googleapis.com/grok-build-public-artifacts/cli";
+pub const UPDATE_CHANNEL_UNAVAILABLE: &str = "No Echo-owned update channel is configured. Install future Echo releases manually from an official Echo source.";
 
-/// CLI base URLs in preference order. Callers (channel-pointer fetch, binary
-/// download, in-app updater) try each in turn and stop at the first success.
-pub(crate) const CLI_BASE_URLS: &[&str] = &[CLI_BASE_URL_PRIMARY, CLI_BASE_URL_FALLBACK];
+pub fn active_update_origins() -> &'static [&'static str] {
+    &[]
+}
 
 /// Minimal configuration the update system needs from the environment.
 ///
@@ -343,6 +339,10 @@ async fn fetch_gcs_channel_pointer(channel: &str, base_url: &str) -> Result<Stri
 /// written (e.g. auto-update should only cache after a successful install or
 /// when no update is needed).
 pub async fn fetch_latest_version(installer: &str, config: &UpdateConfig) -> Result<String> {
+    let _ = (installer, config);
+    anyhow::bail!(UPDATE_CHANNEL_UNAVAILABLE);
+
+    #[allow(unreachable_code)]
     match installer {
         "npm" => fetch_npm_version(&config.channel, config.npm_registry.as_deref()).await,
         "gh-release" => fetch_gh_release_version(&config.channel).await,
@@ -780,5 +780,23 @@ mod tests {
         use xai_grok_shell::env::GrokBuildEnvironment;
         let cfg = UpdateConfig::from_environment(&GrokBuildEnvironment::Production);
         assert_eq!(cfg.channel, "stable");
+    }
+
+    #[test]
+    fn echo_build_has_no_active_update_origins() {
+        let forbidden = [
+            "x.ai",
+            "grok-build-public-artifacts",
+            "xai-org-shared",
+            "@xai-official",
+        ];
+
+        for origin in active_update_origins() {
+            assert!(
+                forbidden.iter().all(|value| !origin.contains(value)),
+                "forbidden update origin: {origin}"
+            );
+        }
+        assert!(active_update_origins().is_empty());
     }
 }

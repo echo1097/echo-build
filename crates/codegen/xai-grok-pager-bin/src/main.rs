@@ -2132,6 +2132,10 @@ fn build_update_config() -> UpdateConfig {
 /// Central gate for auto-update checks; add new suppression rules here,
 /// not at call sites.
 fn should_check_for_updates(no_auto_update_flag: bool) -> bool {
+    let _ = no_auto_update_flag;
+    return false;
+
+    #[allow(unreachable_code)]
     if cfg!(debug_assertions) {
         return false;
     }
@@ -2149,7 +2153,8 @@ fn stdio_auto_update_enabled(
     updates_enabled: bool,
     managed_install: bool,
 ) -> bool {
-    is_stdio && !use_leader && updates_enabled && managed_install
+    let _ = (is_stdio, use_leader, updates_enabled, managed_install);
+    false
 }
 /// True when `exe` is the binary `<grok_home>/bin/grok` resolves to, the
 /// install that adopts a staged update on respawn. Both sides are
