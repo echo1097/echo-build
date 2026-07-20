@@ -16,7 +16,7 @@ pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     match args.method.as_ref() {
         "x.ai/auth/getBearerToken" => handle_get_bearer_token(agent).await,
         "x.ai/getApiKey" => handle_get_api_key(),
-        "x.ai/setApiKey" => handle_set_api_key(args),
+        "x.ai/setApiKey" => handle_set_api_key(agent, args),
         "x.ai/auth/submit_code" => handle_submit_code(agent, args),
         "x.ai/auth/get_url" => handle_get_url(agent).await,
         "x.ai/auth/cancel" => handle_cancel(agent, args),
@@ -63,33 +63,36 @@ async fn handle_get_bearer_token(agent: &MvpAgent) -> ExtResult {
 }
 
 fn handle_get_api_key() -> ExtResult {
-    let key = crate::agent::auth_method::read_xai_api_key_env().ok();
+    let key = std::env::var(crate::agent::auth_method::XAI_API_KEY_ENV_VAR)
+        .or_else(|_| std::env::var(crate::agent::auth_method::LEGACY_XAI_API_KEY_ENV_VAR))
+        .ok();
     ExtMethodResult::success(serde_json::json!({ "key": key }))
         .to_ext_response()
         .map_err(|e| acp::Error::internal_error().data(e.to_string()))
 }
 
-fn handle_set_api_key(args: &acp::ExtRequest) -> ExtResult {
+fn handle_set_api_key(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     let params: serde_json::Value = parse_params(args)?;
     let key = params.get("key").and_then(|v| v.as_str());
     let grok_home = crate::util::grok_home::grok_home();
     if let Some(k) = key {
         if k.is_empty() {
-            crate::auth::clear_api_key(&grok_home)
+            crate::auth::delete_api_key()
                 .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-            // SAFETY: ext_method is single-threaded per agent
-            unsafe { std::env::remove_var("XAI_API_KEY") };
+            crate::auth::clear_api_key_strict(&grok_home)
+                .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
+            agent.sampling_config.borrow_mut().api_key = None;
         } else {
-            crate::auth::store_api_key(&grok_home, k)
+            crate::auth::save_api_key(&grok_home, k)
                 .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-            // SAFETY: ext_method is single-threaded per agent
-            unsafe { std::env::set_var("XAI_API_KEY", k) };
+            agent.sampling_config.borrow_mut().api_key = Some(k.to_owned());
         }
     } else {
-        crate::auth::clear_api_key(&grok_home)
+        crate::auth::delete_api_key()
             .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-        // SAFETY: ext_method is single-threaded per agent
-        unsafe { std::env::remove_var("XAI_API_KEY") };
+        crate::auth::clear_api_key_strict(&grok_home)
+            .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
+        agent.sampling_config.borrow_mut().api_key = None;
     }
     ExtMethodResult::success(serde_json::json!({ "ok": true }))
         .to_ext_response()
@@ -151,6 +154,13 @@ async fn handle_logout(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
 
     let result = crate::auth::perform_logout(&agent.auth_manager, params.scope.as_deref())
         .map_err(|e| acp::Error::internal_error().data(format!("failed to logout: {e}")))?;
+    crate::auth::delete_api_key()
+        .map_err(|e| acp::Error::internal_error().data(format!("failed to clear API key: {e}")))?;
+    crate::auth::clear_api_key_strict(&crate::util::grok_home::grok_home()).map_err(|e| {
+        acp::Error::internal_error().data(format!("failed to clear legacy API key: {e}"))
+    })?;
+    agent.sampling_config.borrow_mut().api_key = None;
+    let api_key_still_set = crate::agent::auth_method::has_xai_api_key_env();
     // `auth.lifecycle` (not `auth`) avoids colliding with the pre-existing
     // per-request `AuthManager::auth()` `#[instrument]` span.
     tracing::info_span!("auth.lifecycle", action = "logout", success = true).in_scope(|| {});
@@ -161,7 +171,7 @@ async fn handle_logout(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
         "ok": true,
         "was_logged_in": result.was_logged_in,
         "email": result.email,
-        "api_key_still_set": result.api_key_still_set,
+        "api_key_still_set": api_key_still_set,
     }))
 }
 

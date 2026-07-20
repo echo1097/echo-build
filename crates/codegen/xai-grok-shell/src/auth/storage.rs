@@ -363,6 +363,7 @@ pub fn read_token_by_scope(grok_home: &Path, scope: &str) -> anyhow::Result<Stri
 }
 
 /// Read the API key from the `xai::api_key` scope in auth.json.
+#[cfg(test)]
 pub fn read_api_key(grok_home: &Path) -> Option<String> {
     let path = grok_home.join("auth.json");
     let map = read_auth_json(&path).ok()?;
@@ -373,6 +374,7 @@ pub fn read_api_key(grok_home: &Path) -> Option<String> {
 ///
 /// Uses the corrupt-recovery reader so a malformed auth.json (e.g. from a
 /// previous crash) can be healed when the user sets an API key.
+#[cfg(test)]
 pub fn store_api_key(grok_home: &Path, api_key: &str) -> std::io::Result<()> {
     let path = grok_home.join("auth.json");
     let mut map = read_auth_json_or_empty_recovering_corrupt(&path)?;
@@ -388,6 +390,7 @@ pub fn store_api_key(grok_home: &Path, api_key: &str) -> std::io::Result<()> {
 }
 
 /// Remove the `xai::api_key` scope from auth.json.
+#[cfg(test)]
 pub fn clear_api_key(grok_home: &Path) -> std::io::Result<()> {
     let path = grok_home.join("auth.json");
     if let Ok(mut map) = read_auth_json(&path) {
@@ -399,6 +402,29 @@ pub fn clear_api_key(grok_home: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Strictly remove only the legacy plaintext API-key scope.
+///
+/// Malformed or unreadable files are reported so a
+/// secure-store migration cannot claim success while plaintext may remain.
+pub(crate) fn clear_api_key_strict(grok_home: &Path) -> std::io::Result<()> {
+    let path = grok_home.join("auth.json");
+    let mut map = match read_auth_json(&path) {
+        Ok(map) => map,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+
+    if map.remove(API_KEY_SCOPE).is_none() {
+        return Ok(());
+    }
+
+    if map.is_empty() {
+        std::fs::remove_file(path)
+    } else {
+        write_auth_json(&path, &map)
+    }
 }
 
 #[cfg(test)]

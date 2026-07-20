@@ -68,6 +68,15 @@ pub(super) fn minimal_auth_hint(
             url: None,
             code: None,
         },
+        AuthState::ApiKeyEntry { saving: true, .. } => {
+            MinimalAuthHint::Failed("Saving OpenRouter API key securely...".to_owned())
+        }
+        AuthState::ApiKeyEntry {
+            error: Some(error), ..
+        } => MinimalAuthHint::Failed(error.clone()),
+        AuthState::ApiKeyEntry { .. } => {
+            MinimalAuthHint::Failed("Enter your OpenRouter API key to continue.".to_owned())
+        }
         AuthState::Done if has_access && !is_zdr_blocked => {
             if let TrustState::Pending { workspace } = trust {
                 MinimalAuthHint::TrustFolder {

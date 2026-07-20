@@ -58,10 +58,7 @@ fn open_voice_tier_upsell(app: &mut AppView) -> Vec<Effect> {
         }
         ActiveView::AgentDashboard => {
             if let Some(d) = app.dashboard.as_mut() {
-                d.set_error_toast(&format!(
-                    "/voice requires SuperGrok — upgrade at {}",
-                    super::billing::UPSELL_URL_UPGRADE
-                ));
+                d.set_error_toast("/voice is not available for this account");
             }
         }
         _ => {}

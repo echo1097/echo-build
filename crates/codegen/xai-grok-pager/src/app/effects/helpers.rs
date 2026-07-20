@@ -632,16 +632,17 @@ pub(super) fn session_picker_entry_to_roster(
         },
     }
 }
-pub(super) async fn send_logout(tx: &AcpAgentTx) {
+pub(super) async fn send_logout(tx: &AcpAgentTx) -> Result<(), String> {
     let req = acp::ExtRequest::new(
         "x.ai/auth/logout",
         serde_json::value::to_raw_value(&serde_json::json!({}))
             .expect("serialize auth/logout params")
             .into(),
     );
-    if let Err(e) = acp_send(req, tx).await {
-        tracing::warn!(error = % e, "logout failed");
-    }
+    acp_send(req, tx)
+        .await
+        .map(|_| ())
+        .map_err(|error| sanitize_user_error(&error.to_string()))
 }
 /// Best-effort `x.ai/auth/cancel`: stops the shell's device/loopback wait so a
 /// later login is single-flight. Errors are ignored — UI already left

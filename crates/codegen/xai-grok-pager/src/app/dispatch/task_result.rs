@@ -554,14 +554,24 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             handle_auth_complete(app, request_seq, meta)
         }
         TaskResult::AuthFailed { request_seq, error } => {
-            if let AuthState::Authenticating {
-                request_seq: current_seq,
-                ..
-            } = &app.auth_state
-                && *current_seq == request_seq
-            {
-                app.auth_state = AuthState::Pending { error: Some(error) };
-                app.auth_code_input.reset();
+            match &mut app.auth_state {
+                AuthState::Authenticating {
+                    request_seq: current_seq,
+                    ..
+                } if *current_seq == request_seq => {
+                    app.auth_state = AuthState::Pending { error: Some(error) };
+                    app.auth_code_input.reset();
+                }
+                AuthState::ApiKeyEntry {
+                    request_seq: current_seq,
+                    saving,
+                    error: current_error,
+                } if *current_seq == request_seq => {
+                    *saving = false;
+                    *current_error = Some(error);
+                    app.auth_code_input.reset();
+                }
+                _ => {}
             }
             vec![]
         }
@@ -959,7 +969,13 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             handle_credit_limit_recheck_complete(app, agent_id, meta)
         }
         TaskResult::LogoutComplete => {
-            app.auth_state = AuthState::Pending { error: None };
+            let request_seq = app.next_auth_request_seq;
+            app.next_auth_request_seq += 1;
+            app.auth_state = AuthState::ApiKeyEntry {
+                request_seq,
+                saving: false,
+                error: None,
+            };
             app.access_gate_shown_logged = false;
             app.announcement_cta_impressions_logged.clear();
             app.gate = None;
@@ -971,6 +987,17 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             let effects = dispatch_exit_session(app);
             app.welcome_prompt_focused = false;
             effects
+        }
+        TaskResult::LogoutFailed { error } => {
+            let request_seq = app.next_auth_request_seq;
+            app.next_auth_request_seq += 1;
+            app.auth_state = AuthState::ApiKeyEntry {
+                request_seq,
+                saving: false,
+                error: Some(error),
+            };
+            app.welcome_prompt_focused = false;
+            dispatch_exit_session(app)
         }
         TaskResult::DeepSearchResults { results, seq } => {
             handle_deep_search_results(app, results, seq)

@@ -873,76 +873,28 @@ pub(crate) async fn run(
     // Preserve auth methods so logout→re-login works without restarting.
     app.auth_methods = connection.auth_methods.clone();
 
-    // Seed auth state from ACP connection metadata.
-    // --force-login overrides: show the login screen even when credentials exist.
-    let force_login = args.force_login && !connection.auth_methods.is_empty();
-    let needs_interactive_login = connection.needs_login || force_login;
+    // The Echo Build TUI is gated on API-key credentials. A cached Grok/OIDC
+    // session must not bypass OpenRouter key entry.
+    let has_api_key = connection.auth_methods.iter().any(|method| {
+        method.id().0.as_ref() == xai_grok_shell::agent::auth_method::XAI_API_KEY_METHOD_ID
+    });
+    let force_login = args.force_login;
+    let needs_interactive_login = !has_api_key || force_login;
     if needs_interactive_login {
         app.welcome_prompt_focused = false;
 
-        if connection.needs_login {
-            // Normal path: use the metadata from startup_auth_metadata()
-            app.login_label = connection.login_label;
-            app.login_method_id = connection.login_method_id;
-            app.auth_start_mode = match connection.auth_start_mode {
-                crate::acp::AuthStartMode::Pending => super::app_view::AuthMode::Pending,
-                crate::acp::AuthStartMode::Command => super::app_view::AuthMode::Command,
-            };
-        } else {
-            // --force-login: find the grok.com method from the advertised list
-            let grok_com = connection
-                .auth_methods
-                .iter()
-                .find(|m| m.id().0.as_ref() == "grok.com");
-            if let Some(method) = grok_com {
-                app.login_label = Some(method.name().to_string());
-                app.login_method_id = Some(method.id().clone());
-                let is_provider = method
-                    .meta()
-                    .as_ref()
-                    .and_then(|v| v.get("external_provider"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                app.auth_start_mode = if is_provider {
-                    super::app_view::AuthMode::Command
-                } else {
-                    super::app_view::AuthMode::Pending
-                };
-            } else {
-                // No grok.com method available, use the first method as fallback
-                let first = &connection.auth_methods[0];
-                app.login_label = Some(first.name().to_string());
-                app.login_method_id = Some(first.id().clone());
-                app.auth_start_mode = super::app_view::AuthMode::Pending;
-            }
-        }
-
-        // Skip the login splash screen — auto-trigger login immediately
-        // by reusing dispatch_login. Effects are stashed and drained after
-        // the initial render so the user sees the auth UI right away.
-        // Empty auth_methods (preferred_method pin with no credentials) is
-        // fail-closed: do not invent grok.com / auto-start OIDC.
+        // Open key entry immediately. Effects are stashed until after the
+        // initial render so the user sees the auth UI right away.
         tracing::info!(
-            method_id = ?app.login_method_id,
             methods_empty = connection.auth_methods.is_empty(),
-            "auto-triggering login at startup"
+            "opening OpenRouter key entry at startup"
         );
     }
     // else: auth_state defaults to Done (already authenticated eagerly)
     // Effects stashed until after the initial render, so the user sees the
     // welcome/auth UI right away.
     let mut post_render_effects = if needs_interactive_login {
-        if connection.auth_methods.is_empty() {
-            // preferred_method pin unavailable — no advertised method to start.
-            app.auth_state = super::app_view::AuthState::Pending {
-                error: Some(
-                    xai_grok_shell::agent::auth_method::PREFERRED_API_KEY_UNAVAILABLE.to_string(),
-                ),
-            };
-            vec![]
-        } else {
-            dispatch::dispatch(Action::Login, &mut app)
-        }
+        dispatch::dispatch(Action::Login, &mut app)
     } else {
         vec![]
     };
@@ -1100,6 +1052,8 @@ pub(crate) async fn run(
             remote_announcements,
         );
         app.active_announcements = xai_grok_announcements::filter_expired(announcements);
+        app.active_announcements
+            .retain(|announcement| announcement.severity.as_deref() != Some("promo"));
         if !app.active_announcements.is_empty() {
             use rand::Rng;
             let idx = rand::rng().random_range(0..app.active_announcements.len());

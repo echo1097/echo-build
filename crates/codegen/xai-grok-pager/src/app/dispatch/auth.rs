@@ -45,17 +45,6 @@ pub(super) fn ensure_login_method(app: &mut AppView) {
     // No interactive method: leave login_method_id unset (fail-closed).
 }
 
-/// Error when no interactive login method is available (empty auth_methods,
-/// e.g. `preferred_method=api_key` with no credentials). Prefer the shell's
-/// pin-unavailable copy when the list is empty.
-fn no_login_method_error(app: &AppView) -> String {
-    if app.auth_methods.is_empty() {
-        xai_grok_shell::agent::auth_method::PREFERRED_API_KEY_UNAVAILABLE.to_string()
-    } else {
-        "No login method available".to_string()
-    }
-}
-
 /// Abort any in-flight Authenticate/SwitchAccount task *and* its URL poll so a
 /// new login cannot stack device-code mints or have a stale poll steal the
 /// successor's URL (single-flight). No-op when not authenticating or when the
@@ -83,37 +72,9 @@ fn abort_prior_auth(app: &mut AppView) {
     }
 }
 
-/// Log out, then start a new login flow in a single sequential task.
+/// Open the same OpenRouter key-entry flow used by login.
 pub(super) fn dispatch_switch_account(app: &mut AppView) -> Vec<Effect> {
-    ensure_login_method(app);
-
-    let Some(method_id) = app.login_method_id.clone() else {
-        app.auth_state = AuthState::Pending {
-            error: Some(no_login_method_error(app)),
-        };
-        return vec![];
-    };
-
-    abort_prior_auth(app);
-
-    let request_seq = app.next_auth_request_seq;
-    app.next_auth_request_seq += 1;
-    app.auth_code_input.reset();
-    app.auth_state = AuthState::Authenticating {
-        request_seq,
-        handle: None,
-        auth_url: None,
-        mode: app.auth_start_mode,
-    };
-
-    vec![
-        Effect::SwitchAccount {
-            request_seq,
-            method_id,
-            use_oauth: app.auth_use_oauth,
-        },
-        Effect::PollAuthUrl { request_seq },
-    ]
+    dispatch_login(app)
 }
 
 /// Scan the trailing run of session-event / system blocks for a
@@ -199,25 +160,15 @@ pub(super) fn strip_trailing_auth_error_blocks(agent: &mut AgentView) {
     }
 }
 
-/// Start an interactive login flow. Triggered by pressing 'l' on the
-/// welcome screen or by the `/login` slash command.
+/// Start OpenRouter key entry. Triggered by pressing 'l' on the welcome
+/// screen or by the `/login` slash command.
 ///
 /// When invoked mid-session (the active view is an agent/dashboard rather
-/// than the welcome screen), the auth UI — including the external auth
-/// provider's sign-in URL and status — is only rendered by the welcome
-/// view. We therefore stash the caller's view in `auth_return_view` and
-/// switch to `Welcome` so the flow is actually visible; the prior view is
-/// restored once auth completes or is cancelled. Without this, `/login`
-/// with an external auth provider configured appeared to do nothing.
+/// than the welcome screen), key entry is only rendered by the welcome view.
+/// We therefore stash the caller's view in `auth_return_view` and
+/// switch to `Welcome` so the key field is visible; the prior view is restored
+/// once API-key authentication completes or is cancelled.
 pub(super) fn dispatch_login(app: &mut AppView) -> Vec<Effect> {
-    ensure_login_method(app);
-    let Some(method_id) = app.login_method_id.clone() else {
-        app.auth_state = AuthState::Pending {
-            error: Some(no_login_method_error(app)),
-        };
-        return vec![];
-    };
-
     // Surface the auth UI when triggered from inside a session. `show_welcome`
     // resets ephemeral state here, covering the AuthComplete / cancel-login
     // fallbacks too (`auth_return_view` is only ever set here).
@@ -231,22 +182,12 @@ pub(super) fn dispatch_login(app: &mut AppView) -> Vec<Effect> {
     let request_seq = app.next_auth_request_seq;
     app.next_auth_request_seq += 1;
     app.auth_code_input.reset();
-    app.auth_state = AuthState::Authenticating {
+    app.auth_state = AuthState::ApiKeyEntry {
         request_seq,
-        handle: None,
-        auth_url: None,
-        mode: app.auth_start_mode,
+        saving: false,
+        error: None,
     };
-
-    vec![
-        Effect::Authenticate {
-            request_seq,
-            method_id,
-            use_oauth: app.auth_use_oauth,
-            force_interactive: true,
-        },
-        Effect::PollAuthUrl { request_seq },
-    ]
+    vec![]
 }
 
 /// Cancel a login that was started from inside a session and restore the
@@ -301,6 +242,28 @@ pub(super) fn dispatch_submit_auth_code(app: &mut AppView, code: String) -> Vec<
     vec![Effect::SubmitAuthCode { request_seq, code }]
 }
 
+pub(super) fn dispatch_submit_api_key(app: &mut AppView, api_key: String) -> Vec<Effect> {
+    let AuthState::ApiKeyEntry {
+        request_seq,
+        saving,
+        error,
+    } = &mut app.auth_state
+    else {
+        return vec![];
+    };
+
+    if *saving || api_key.trim().is_empty() {
+        return vec![];
+    }
+
+    *saving = true;
+    *error = None;
+    vec![Effect::SaveApiKey {
+        request_seq: *request_seq,
+        api_key,
+    }]
+}
+
 // TaskResult handlers.
 
 pub(super) fn handle_auth_complete(
@@ -308,12 +271,12 @@ pub(super) fn handle_auth_complete(
     request_seq: u64,
     meta: Option<serde_json::Value>,
 ) -> Vec<Effect> {
-    if let AuthState::Authenticating {
-        request_seq: current_seq,
-        ..
-    } = &app.auth_state
-        && *current_seq == request_seq
-    {
+    let current_seq = match &app.auth_state {
+        AuthState::Authenticating { request_seq, .. }
+        | AuthState::ApiKeyEntry { request_seq, .. } => *request_seq,
+        _ => return vec![],
+    };
+    if current_seq == request_seq {
         if let Some(meta_val) = meta.as_ref()
             && let Ok(auth_meta) =
                 serde_json::from_value::<xai_grok_shell::auth::AuthMeta>(meta_val.clone())

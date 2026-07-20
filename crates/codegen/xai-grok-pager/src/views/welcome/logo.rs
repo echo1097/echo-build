@@ -143,6 +143,10 @@ fn render_into(area: Rect, buf: &mut Buffer, theme: &Theme, logo: &str) {
                 }
                 run.push(ch);
             }
+            // keep every row the same width so the whole drawing centers as one block
+            for _ in line.chars().count()..cols as usize {
+                run.push(' ');
+            }
             if let Some(prev) = run_color {
                 spans.push(Span::styled(run, Style::default().fg(prev)));
             }
@@ -268,6 +272,18 @@ mod tests {
         } else {
             assert_eq!(compact_logo_line_count(), 0);
         }
+    }
+
+    #[test]
+    fn ascii_logo_centers_as_one_block() {
+        let area = Rect::new(0, 0, 31, count_lines(LOGO));
+        let mut buf = Buffer::empty(area);
+
+        render_into(area, &mut buf, &Theme::current(), LOGO);
+
+        assert_eq!(buf[(14, 0)].symbol(), "_");
+        assert_eq!(buf[(6, 6)].symbol(), "|");
+        assert_eq!(buf[(25, 6)].symbol(), "|");
     }
 
     #[test]

@@ -759,6 +759,34 @@ pub fn render_welcome(
                 upgrade_cta_rect: None,
             }
         }
+        AuthState::ApiKeyEntry { saving, error, .. } => {
+            render_openrouter_key_entry(
+                content_area,
+                buf,
+                &theme,
+                params.auth_code_input,
+                params.auth_code_cursor_byte,
+                *saving,
+                error.as_deref(),
+            );
+            WelcomeRenderResult {
+                cursor_pos: None,
+                post_flush_escapes: None,
+                menu_rects: vec![],
+                prompt_rect: None,
+                session_picker_hit_areas: None,
+                import_banner_rect: None,
+                auth_url_rect: None,
+                auth_fallback_rect: None,
+                refresh_rect: None,
+                gate_url_rect: None,
+                changelog_action_present: false,
+                changelog_cta_rect: None,
+                announcement_truncated: false,
+                announcement_rect: None,
+                upgrade_cta_rect: None,
+            }
+        }
         AuthState::Done if params.is_zdr_blocked => {
             let menu = [("l", "Switch account"), ("q", "Quit")];
             let (menu_rects, post_flush_escapes) = render_welcome_blocked(
@@ -1517,6 +1545,140 @@ fn render_welcome_authenticating(
     }
 }
 
+fn render_openrouter_key_entry(
+    content_area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+    input: &str,
+    cursor_byte: usize,
+    saving: bool,
+    error: Option<&str>,
+) {
+    let logo_height = logo_line_count(content_area.height);
+    let top_pad = content_area.height.saturating_sub(logo_height) / 10;
+    let [
+        _,
+        logo_area,
+        _,
+        title_area,
+        body_area,
+        error_area,
+        _,
+        input_area,
+        _,
+        hint_area,
+        _,
+    ] = Layout::vertical([
+        Constraint::Length(top_pad),
+        Constraint::Length(logo_height),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(u16::from(error.is_some())),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(content_area);
+
+    render_logo(logo_area, buf, theme, content_area.height);
+    Paragraph::new(Line::from(Span::styled(
+        "Setup",
+        Style::default()
+            .fg(theme.text_primary)
+            .add_modifier(Modifier::BOLD),
+    )))
+    .alignment(Alignment::Center)
+    .render(title_area, buf);
+    Paragraph::new("Enter your OpenRouter API key.")
+    .style(Style::default().fg(theme.gray_bright))
+    .alignment(Alignment::Center)
+    .render(body_area, buf);
+
+    if let Some(message) = error {
+        Paragraph::new(message)
+            .style(Style::default().fg(theme.accent_error))
+            .alignment(Alignment::Center)
+            .render(error_area, buf);
+    }
+
+    let input_width = content_area.width.saturating_sub(4).min(64);
+    let [_, centered_input, _] = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(input_width),
+        Constraint::Min(0),
+    ])
+    .flex(Flex::Center)
+    .areas(input_area);
+    render_openrouter_input_box(centered_input, buf, theme, input, cursor_byte);
+
+    let hint = if saving {
+        Line::from(Span::styled(
+            "Saving securely...",
+            Style::default().fg(theme.gray_bright),
+        ))
+    } else {
+        let mut spans = vec![
+            Span::styled(
+                "enter",
+                Style::default()
+                    .fg(theme.text_primary)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  save    ", Style::default().fg(theme.gray)),
+        ];
+        spans.extend(quit_hint_spans(theme));
+        Line::from(spans)
+    };
+    Paragraph::new(hint)
+        .alignment(Alignment::Center)
+        .render(hint_area, buf);
+}
+
+fn render_openrouter_input_box(
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+    input: &str,
+    cursor_byte: usize,
+) {
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.gray_bright))
+        .padding(Padding {
+            left: 2,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        });
+    let inner = input_block.inner(area);
+    input_block.render(area, buf);
+
+    if inner.height == 0 || inner.width <= 2 {
+        return;
+    }
+
+    let prompt = crate::glyphs::prompt_arrow();
+    let prompt_width = prompt.width() as u16;
+    let available = inner.width.saturating_sub(prompt_width);
+    let (display, cursor_column) =
+        fully_masked_api_key_view(input, cursor_byte, available as usize);
+    let line = Line::from(vec![
+        Span::styled(prompt, Style::default().fg(theme.text_primary)),
+        Span::styled(display, Style::default().fg(theme.text_primary)),
+    ]);
+    buf.set_line(inner.x, inner.y, &line, inner.width);
+
+    if available > 0 {
+        let cursor_x = inner.x + prompt_width + cursor_column as u16;
+        if let Some(cell) = buf.cell_mut((cursor_x, inner.y)) {
+            cell.set_style(Style::default().fg(theme.bg_base).bg(theme.text_primary));
+        }
+    }
+}
+
 /// Shrink a rect by `inset` columns on the left and right (clamped at 0).
 fn inset_horizontal(rect: Rect, inset: u16) -> Rect {
     Rect {
@@ -1687,7 +1849,7 @@ fn render_welcome_done(
     let cta = p
         .gate
         .and_then(|g| g.label.as_deref())
-        .unwrap_or("Upgrade Subscription");
+        .unwrap_or("Open Account");
     let in_vscode_family = welcome_in_vscode_family();
     let (key_g, key_l, key_q) = (
         "ctrl+g",
@@ -2552,6 +2714,28 @@ fn masked_auth_token_view(input: &str, cursor_byte: usize, width: usize) -> (Str
     )
 }
 
+fn fully_masked_api_key_view(input: &str, cursor_byte: usize, width: usize) -> (String, usize) {
+    if input.is_empty() {
+        return ("OpenRouter API key".to_owned(), 0);
+    }
+
+    let mut display = String::new();
+    let mut mapped_cursor = None;
+    for (byte, _) in input.grapheme_indices(true) {
+        if byte == cursor_byte {
+            mapped_cursor = Some(display.len());
+        }
+        display.push('\u{2022}');
+    }
+    let cursor = mapped_cursor.unwrap_or(display.len());
+    let buffer = xai_ratatui_textarea::EditBuffer::from_parts(display.as_str(), cursor);
+    let viewport = buffer.single_line_viewport(width);
+    (
+        display[viewport.visible_byte_range].to_owned(),
+        viewport.cursor_display_column,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2601,6 +2785,23 @@ mod tests {
         let masked = build_masked_auth_token(input, input.len()).display;
         assert!(masked.starts_with("••••"));
         assert!(masked.contains("\u{2022}"));
+    }
+
+    #[test]
+    fn openrouter_api_key_is_fully_masked() {
+        let secret = "sk-or-v1-super-secret";
+        let (display, _) = fully_masked_api_key_view(secret, secret.len(), 64);
+
+        assert!(!display.contains("sk-or"));
+        assert_eq!(
+            display.graphemes(true).count(),
+            secret.graphemes(true).count()
+        );
+        assert!(
+            display
+                .graphemes(true)
+                .all(|grapheme| grapheme == "\u{2022}")
+        );
     }
 
     #[test]

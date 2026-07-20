@@ -77,11 +77,12 @@ pub(crate) fn execute(
         }
         Effect::Logout => {
             let tx = acp_tx.clone();
-            tasks
-                .spawn(async move {
-                    send_logout(&tx).await;
-                    TaskResult::LogoutComplete
-                });
+            tasks.spawn(async move {
+                match send_logout(&tx).await {
+                    Ok(()) => TaskResult::LogoutComplete,
+                    Err(error) => TaskResult::LogoutFailed { error },
+                }
+            });
         }
         Effect::CancelAuth { request_seq } => {
             let tx = acp_tx.clone();
@@ -116,7 +117,7 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             let abort_handle = tasks
                 .spawn(async move {
-                    send_logout(&tx).await;
+                    let _ = send_logout(&tx).await;
                     send_authenticate(&tx, request_seq, method_id, use_oauth, false)
                         .await
                 });
@@ -1983,6 +1984,38 @@ pub(crate) fn execute(
                         }
                     }
                 });
+        }
+        Effect::SaveApiKey {
+            request_seq,
+            api_key,
+        } => {
+            let tx = acp_tx.clone();
+            tasks.spawn(async move {
+                let params = serde_json::json!({ "key": api_key });
+                let req = acp::ExtRequest::new(
+                    "x.ai/setApiKey",
+                    serde_json::value::to_raw_value(&params)
+                        .expect("serialize OpenRouter API key")
+                        .into(),
+                );
+                if let Err(error) = acp_send(req, &tx).await {
+                    return TaskResult::AuthFailed {
+                        request_seq,
+                        error: sanitize_user_error(&error.to_string()),
+                    };
+                }
+
+                send_authenticate(
+                    &tx,
+                    request_seq,
+                    acp::AuthMethodId::new(
+                        xai_grok_shell::agent::auth_method::XAI_API_KEY_METHOD_ID,
+                    ),
+                    false,
+                    false,
+                )
+                .await
+            });
         }
         Effect::FetchMcpsList { agent_id, session_id, cache } => {
             let tx = acp_tx.clone();

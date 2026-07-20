@@ -407,10 +407,9 @@ fn cancel_login_strips_reauth_prompt_from_scrollback() {
     );
 }
 
-/// Empty `auth_methods` (preferred_method pin unavailable) must not invent
-/// `grok.com` or start an OIDC flow the agent did not advertise.
+/// The TUI login is OpenRouter key entry even when no Grok method is advertised.
 #[test]
-fn login_with_empty_auth_methods_fails_closed() {
+fn login_with_empty_auth_methods_opens_openrouter_key_entry() {
     let mut app = test_app_with_agent();
     app.auth_methods.clear();
     app.login_method_id = None;
@@ -419,23 +418,42 @@ fn login_with_empty_auth_methods_fails_closed() {
 
     assert!(
         effects.is_empty(),
-        "must not start Authenticate without an advertised method"
+        "key entry must not start Grok authentication"
     );
     assert_eq!(
         app.active_view,
-        ActiveView::Agent(AgentId(0)),
-        "must stay on the session view"
+        ActiveView::Welcome,
+        "login entry is rendered by the welcome view"
     );
     assert!(
         matches!(
             &app.auth_state,
-            AuthState::Pending { error: Some(msg) }
-                if msg.contains("preferred_method=api_key")
+            AuthState::ApiKeyEntry {
+                saving: false,
+                error: None,
+                ..
+            }
         ),
-        "must surface pin-unavailable error, got {:?}",
+        "must show OpenRouter key entry, got {:?}",
         app.auth_state
     );
-    assert!(app.login_method_id.is_none());
+}
+
+#[test]
+fn submitting_openrouter_key_emits_secure_save_effect() {
+    let mut app = test_app_with_agent();
+    dispatch(Action::Login, &mut app);
+
+    let effects = dispatch(Action::SubmitApiKey("sk-or-test".to_owned()), &mut app);
+
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::SaveApiKey { request_seq: 1, api_key }] if api_key == "sk-or-test"
+    ));
+    assert!(matches!(
+        app.auth_state,
+        AuthState::ApiKeyEntry { saving: true, .. }
+    ));
 }
 
 /// Puts the app in `Authenticating` with a live task's abort handle installed
@@ -447,18 +465,18 @@ fn install_live_auth_task(
     rt: &tokio::runtime::Runtime,
 ) -> (tokio::task::JoinHandle<()>, u64) {
     dispatch(Action::Login, app);
+    let request_seq = match app.auth_state {
+        AuthState::ApiKeyEntry { request_seq, .. } => request_seq,
+        ref other => panic!("expected API-key entry after Login, got {other:?}"),
+    };
     let task = rt.spawn(std::future::pending::<()>());
-    match &mut app.auth_state {
-        AuthState::Authenticating {
-            handle,
-            request_seq,
-            ..
-        } => {
-            *handle = Some(task.abort_handle());
-            (task, *request_seq)
-        }
-        other => panic!("expected Authenticating after Login, got {other:?}"),
-    }
+    app.auth_state = AuthState::Authenticating {
+        request_seq,
+        handle: Some(task.abort_handle()),
+        auth_url: None,
+        mode: AuthMode::Pending,
+    };
+    (task, request_seq)
 }
 
 fn test_runtime() -> tokio::runtime::Runtime {
@@ -485,19 +503,17 @@ fn login_while_authenticating_aborts_prior_task() {
         );
     });
     match &app.auth_state {
-        AuthState::Authenticating { request_seq, .. } => {
+        AuthState::ApiKeyEntry { request_seq, .. } => {
             assert!(
                 *request_seq > first_seq,
                 "re-login must bump request_seq for single-flight"
             );
         }
-        other => panic!("expected Authenticating after re-Login, got {other:?}"),
+        other => panic!("expected API-key entry after re-Login, got {other:?}"),
     }
     assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::Authenticate { .. })),
-        "re-login must emit a new Authenticate"
+        effects.is_empty(),
+        "re-login waits for an API-key submission"
     );
 }
 
@@ -509,8 +525,8 @@ fn stale_auth_complete_after_relogin_is_ignored() {
     let mut app = test_app_with_agent();
     dispatch(Action::Login, &mut app);
     let first_seq = match &app.auth_state {
-        AuthState::Authenticating { request_seq, .. } => *request_seq,
-        other => panic!("expected Authenticating after Login, got {other:?}"),
+        AuthState::ApiKeyEntry { request_seq, .. } => *request_seq,
+        other => panic!("expected API-key entry after Login, got {other:?}"),
     };
     dispatch(Action::Login, &mut app); // re-login bumps to seq2
 
@@ -523,10 +539,10 @@ fn stale_auth_complete_after_relogin_is_ignored() {
     );
 
     match &app.auth_state {
-        AuthState::Authenticating { request_seq, .. } => {
+        AuthState::ApiKeyEntry { request_seq, .. } => {
             assert!(
                 *request_seq > first_seq,
-                "stale AuthComplete must leave the new attempt authenticating"
+                "stale AuthComplete must leave the new key-entry attempt active"
             );
         }
         other => panic!("stale AuthComplete must be ignored, got {other:?}"),
@@ -550,10 +566,10 @@ fn switch_account_while_authenticating_aborts_prior_task() {
         );
     });
     match &app.auth_state {
-        AuthState::Authenticating { request_seq, .. } => {
+        AuthState::ApiKeyEntry { request_seq, .. } => {
             assert!(*request_seq > first_seq, "switch must bump request_seq");
         }
-        other => panic!("expected Authenticating after SwitchAccount, got {other:?}"),
+        other => panic!("expected API-key entry after SwitchAccount, got {other:?}"),
     }
 }
 
@@ -583,19 +599,13 @@ fn cancel_login_restores_view() {
     let mut app = test_app_with_agent();
     dispatch(Action::Login, &mut app);
     assert_eq!(app.active_view, ActiveView::Welcome);
-    let prior_seq = match &app.auth_state {
-        AuthState::Authenticating { request_seq, .. } => *request_seq,
-        other => panic!("expected Authenticating after Login, got {other:?}"),
-    };
+    assert!(matches!(app.auth_state, AuthState::ApiKeyEntry { .. }));
 
     let effects = dispatch(Action::CancelLogin, &mut app);
 
     assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::CancelAuth { request_seq }] if *request_seq == prior_seq
-        ),
-        "cancel must tell the shell to stop the in-flight auth poll for this attempt"
+        effects.is_empty(),
+        "key entry has no browser auth poll to cancel"
     );
     assert_eq!(app.active_view, ActiveView::Agent(AgentId(0)));
     assert_eq!(app.auth_return_view, None);

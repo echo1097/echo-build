@@ -188,17 +188,15 @@ impl acp::Agent for MvpAgent {
         );
         if !self.cfg.borrow().grok_com_config.api_key_auth_disabled()
             && auth_method::read_xai_api_key_env().is_err()
-            && let Some(api_key) = crate::auth::read_api_key(
-                &crate::util::grok_home::grok_home(),
-            )
         {
-            unsafe { std::env::set_var("XAI_API_KEY", &api_key) };
-            tracing::info!("auth: loaded API key from auth.json (xai::api_key scope)");
-            xai_grok_telemetry::unified_log::info(
-                "auth: loaded API key from auth.json (xai::api_key scope)",
-                None,
-                None,
-            );
+            match crate::auth::load_api_key(&crate::util::grok_home::grok_home()) {
+                Ok(Some(_)) => tracing::info!("auth: loaded API key from credential store"),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    error = %error,
+                    "auth: failed to read API key from credential store"
+                ),
+            }
         }
         let disable_api_key_auth = self
             .cfg
@@ -487,15 +485,15 @@ impl acp::Agent for MvpAgent {
                 if sampling_config.api_key.is_none() {
                     if let Ok(api_key) = auth_method::read_xai_api_key_env() {
                         sampling_config.api_key = Some(api_key.clone());
-                        if let Err(e) = crate::auth::store_api_key(
+                        if let Err(e) = crate::auth::save_api_key(
                             &crate::util::grok_home::grok_home(),
                             &api_key,
                         ) {
                             tracing::warn!(
-                                "failed to persist API key to auth.json: {e}"
+                                "failed to persist API key to credential store: {e}"
                             );
                             xai_grok_telemetry::unified_log::warn(
-                                "failed to persist API key to auth.json",
+                                "failed to persist API key to credential store",
                                 None,
                                 Some(serde_json::json!({ "error" : e.to_string() })),
                             );

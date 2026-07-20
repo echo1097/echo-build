@@ -2063,6 +2063,27 @@ fn logout_clears_pending_gate_verification() {
     assert!(app.last_subscription_check_at.is_none());
 }
 
+#[test]
+fn logout_failure_returns_to_key_entry_with_error() {
+    let mut app = test_app_with_agent();
+
+    dispatch_task_result(
+        TaskResult::LogoutFailed {
+            error: "credential store unavailable".to_owned(),
+        },
+        &mut app,
+    );
+
+    assert!(matches!(
+        app.auth_state,
+        AuthState::ApiKeyEntry {
+            saving: false,
+            error: Some(ref error),
+            ..
+        } if error == "credential store unavailable"
+    ));
+}
+
 /// `apply_setting_rollback` on a known key reverts the in-memory
 /// cache without emitting any new effects.
 #[test]

@@ -7,6 +7,8 @@
 .env.*
 !.env.example
 .venv/
+notes.md
+todo.md
 
 # Coverage and profiling output
 coverage/
@@ -28,4 +30,3 @@ Thumbs.db
 *.log
 core
 core.*
-

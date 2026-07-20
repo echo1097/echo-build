@@ -136,18 +136,16 @@ fn is_max_tier_rejects_partial_matches() {
 }
 
 #[test]
-fn upsell_non_max_shows_qa_with_two_options() {
+fn upsell_non_max_shows_qa_with_account_action_only() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
         &mut app,
         CreditLimitUpsellMode::LegacyPayg { enabled: false },
     );
     let q = &agent_qv(&app).questions[0];
-    assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[0].label, "Upgrade tier");
-    assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_UPGRADE));
-    assert_eq!(q.options[1].label, "Pay as you go");
-    assert_eq!(q.options[1].id.as_deref(), Some(UPSELL_URL_PAYG));
+    assert_eq!(q.options.len(), 1);
+    assert_eq!(q.options[0].label, "Pay as you go");
+    assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_PAYG));
 }
 
 #[test]
@@ -158,8 +156,8 @@ fn upsell_non_max_payg_on_shows_increase_label() {
         CreditLimitUpsellMode::LegacyPayg { enabled: true },
     );
     let q = &agent_qv(&app).questions[0];
-    assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[1].label, "Increase limit");
+    assert_eq!(q.options.len(), 1);
+    assert_eq!(q.options[0].label, "Increase limit");
 }
 
 #[test]
@@ -191,18 +189,18 @@ fn upsell_non_max_qa_heading_is_spending_cap_when_payg_on() {
 }
 
 #[test]
-fn upsell_non_max_upgrade_url_is_supergrok() {
+fn upsell_non_max_has_no_subscription_upgrade_action() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
         &mut app,
         CreditLimitUpsellMode::LegacyPayg { enabled: false },
     );
-    let url = agent_qv(&app).questions[0].options[0]
-        .id
-        .as_deref()
-        .unwrap();
-    assert!(url.contains("supergrok"), "got: {url}");
-    assert!(url.contains("referrer=grok-build"), "got: {url}");
+    let question = &agent_qv(&app).questions[0];
+    assert!(question.options.iter().all(|option| {
+        !option.label.to_ascii_lowercase().contains("upgrade")
+            && !option.description.to_ascii_lowercase().contains("upgrade")
+            && option.id.as_deref() != Some(UPSELL_URL_UPGRADE)
+    }));
 }
 
 #[test]
@@ -212,7 +210,7 @@ fn upsell_non_max_payg_url_is_usage() {
         &mut app,
         CreditLimitUpsellMode::LegacyPayg { enabled: false },
     );
-    let url = agent_qv(&app).questions[0].options[1]
+    let url = agent_qv(&app).questions[0].options[0]
         .id
         .as_deref()
         .unwrap();
@@ -227,7 +225,7 @@ fn upsell_non_max_payg_on_description_mentions_spending_cap() {
         CreditLimitUpsellMode::LegacyPayg { enabled: true },
     );
     assert_eq!(
-        agent_qv(&app).questions[0].options[1].description,
+        agent_qv(&app).questions[0].options[0].description,
         "Raise your pay-as-you-go spending cap"
     );
 }
@@ -240,7 +238,7 @@ fn upsell_non_max_payg_off_description_mentions_on_demand() {
         CreditLimitUpsellMode::LegacyPayg { enabled: false },
     );
     assert_eq!(
-        agent_qv(&app).questions[0].options[1].description,
+        agent_qv(&app).questions[0].options[0].description,
         "Enable pay-as-you-go credits for on-demand usage"
     );
 }
@@ -251,13 +249,10 @@ fn upsell_non_max_unified_shows_buy_credits() {
     open_upsell_qa(&mut app, CreditLimitUpsellMode::UnifiedCredits);
     let q = &agent_qv(&app).questions[0];
     assert!(q.question.contains("weekly limit"));
+    assert_eq!(q.options.len(), 1);
+    assert_eq!(q.options[0].label, "Buy more credits");
     assert_eq!(
         q.options[0].description,
-        "Upgrade to a higher tier for more usage"
-    );
-    assert_eq!(q.options[1].label, "Buy more credits");
-    assert_eq!(
-        q.options[1].description,
         "Purchase credits to keep using Echo Build"
     );
 }
@@ -809,47 +804,23 @@ fn free_usage_error_detected_by_embedded_code() {
 }
 
 #[test]
-fn free_usage_upsell_shows_two_options_with_exact_labels() {
+fn free_usage_limit_shows_notice_without_upgrade_options() {
     let mut app = test_app_with_agent();
     let agent = app.agents.get_mut(&AgentId(0)).unwrap();
     open_free_usage_upsell(agent, None);
 
-    let qv = agent_qv(&app);
-    assert!(matches!(
-        qv.local_kind,
-        Some(
-            crate::views::question_view::LocalQuestionKind::FreeUsageUpsell {
-                source: xai_grok_telemetry::events::SuperGrokUpsell::FreeUsagePaywall,
-            }
-        )
-    ));
-    let q = &qv.questions[0];
-    assert_eq!(q.question, "You hit your free usage limit.");
-    let expected = [
-        (
-            "Upgrade to SuperGrok",
-            "For everyday coding and productivity tasks",
-            Some(UPSELL_URL_UPGRADE),
-        ),
-        (
-            "Upgrade to SuperGrok Heavy",
-            "Get the most out of Echo Build. Highest usage limits.",
-            Some(UPSELL_URL_UPGRADE),
-        ),
-    ];
-    assert_eq!(q.options.len(), expected.len());
-    for (opt, (label, desc, id)) in q.options.iter().zip(expected) {
-        assert_eq!(opt.label, label);
-        assert_eq!(opt.description, desc);
-        assert_eq!(opt.id.as_deref(), id);
-    }
+    assert!(app.agents[&AgentId(0)].question_view.is_none());
+    assert_eq!(
+        last_system_text(&app, AgentId(0)),
+        "You hit your free usage limit."
+    );
 }
 
 /// Replay the REAL free-usage sequence — send → `RetryState::Retrying` →
 /// `Exhausted` → PromptResponse error — through the production handlers:
-/// the paywall modal must open on the turn-end error.
+/// a plain limit notice must appear on the turn-end error.
 #[test]
-fn free_usage_failure_opens_paywall_modal() {
+fn free_usage_failure_shows_limit_notice() {
     use crate::app::acp_handler::apply_session_event_for_test;
     use xai_grok_shell::extensions::notification::{RetryState, SessionUpdate};
 
@@ -891,7 +862,7 @@ fn free_usage_failure_opens_paywall_modal() {
         assert!(agent.session.free_usage_blocked);
     }
 
-    // 4. Turn-end RPC error opens the upsell modal.
+    // 4. Turn-end RPC error shows the limit notice.
     let _ = dispatch(
         Action::TaskComplete(TaskResult::PromptResponse {
             agent_id: id,
@@ -901,42 +872,16 @@ fn free_usage_failure_opens_paywall_modal() {
         }),
         &mut app,
     );
-    assert!(
-        app.agents[&id].question_view.is_some(),
-        "paywall modal must open"
-    );
-}
-
-/// Answer translation: both upgrade options open their URL.
-#[test]
-fn free_usage_translate_local_submit_maps_options() {
-    use crate::app::agent_view::translate_local_submit_for_test;
-    use crate::app::app_view::InputOutcome;
-    use crate::views::question_view::{LocalQuestionKind, QuestionSelection};
-
-    let mut app = test_app_with_agent();
-    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-    open_free_usage_upsell(agent, None);
-    let mut qv = agent.question_view.take().unwrap();
-    let kind = || LocalQuestionKind::FreeUsageUpsell {
-        source: xai_grok_telemetry::events::SuperGrokUpsell::FreeUsagePaywall,
-    };
-
-    for idx in [0, 1] {
-        qv.selections[0] = QuestionSelection::Single(Some(idx));
-        match translate_local_submit_for_test(&qv, kind(), false) {
-            InputOutcome::Action(Action::OpenUrl(url)) => assert_eq!(url, UPSELL_URL_UPGRADE),
-            other => panic!("expected OpenUrl for option {idx}, got {other:?}"),
-        }
-    }
+    assert!(app.agents[&id].question_view.is_none());
+    assert_eq!(last_system_text(&app, id), "You hit your free usage limit.");
 }
 
 // ── Restricted-command upsell tests ─────────────────────────────────
 
-/// Submitting a tier-restricted command opens the two-option SuperGrok
-/// upsell and neither runs the command nor leaks the text to the model.
+/// Submitting a tier-restricted command shows an unavailable notice and
+/// neither runs the command nor leaks the text to the model.
 #[test]
-fn restricted_command_submit_opens_two_option_upsell() {
+fn restricted_command_submit_shows_unavailable_notice() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     app.agents
@@ -957,22 +902,11 @@ fn restricted_command_submit_opens_two_option_upsell() {
     );
     assert!(agent.prompt.text().is_empty(), "composer consumed");
 
-    let qv = agent_qv(&app);
-    assert!(matches!(
-        qv.local_kind,
-        Some(
-            crate::views::question_view::LocalQuestionKind::FreeUsageUpsell {
-                source: xai_grok_telemetry::events::SuperGrokUpsell::RestrictedCommand,
-            }
-        )
-    ));
-    let q = &qv.questions[0];
-    assert_eq!(q.question, "Unlock all features with SuperGrok.");
-    assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[0].label, "Upgrade to SuperGrok");
-    assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_UPGRADE));
-    assert_eq!(q.options[1].label, "Upgrade to SuperGrok Heavy");
-    assert_eq!(q.options[1].id.as_deref(), Some(UPSELL_URL_UPGRADE));
+    assert!(agent.question_view.is_none());
+    assert_eq!(
+        last_system_text(&app, id),
+        "This feature is not available for this account."
+    );
 }
 
 /// Aliases of a restricted command hit the same upsell (deny-list
@@ -989,7 +923,11 @@ fn restricted_command_alias_also_upsells() {
     let effects = dispatch(Action::SendPrompt("/cost".into()), &mut app);
 
     assert!(effects.is_empty());
-    assert!(app.agents[&id].question_view.is_some(), "upsell must open");
+    assert!(app.agents[&id].question_view.is_none());
+    assert_eq!(
+        last_system_text(&app, id),
+        "This feature is not available for this account."
+    );
 }
 
 /// A restricted submit while ANOTHER question modal is already open

@@ -29,15 +29,18 @@ pub const XAI_API_KEY_ENV_VAR: &str = "XAI_API_KEY";
 /// so existing deployments that use the old name keep working.
 pub const LEGACY_XAI_API_KEY_ENV_VAR: &str = "GROK_CODE_XAI_API_KEY";
 
-/// Read the API key from the environment.
+/// Read the active process API key.
 ///
 /// Checks `XAI_API_KEY` first, then falls back to the legacy
-/// `GROK_CODE_XAI_API_KEY` for backward compatibility.
+/// `GROK_CODE_XAI_API_KEY` for backward compatibility, then the key loaded
+/// into memory from the operating system credential store.
 pub fn read_xai_api_key_env() -> Result<String, std::env::VarError> {
-    std::env::var(XAI_API_KEY_ENV_VAR).or_else(|_| std::env::var(LEGACY_XAI_API_KEY_ENV_VAR))
+    std::env::var(XAI_API_KEY_ENV_VAR)
+        .or_else(|_| std::env::var(LEGACY_XAI_API_KEY_ENV_VAR))
+        .or_else(|error| crate::auth::cached_api_key().ok_or(error))
 }
 
-/// Returns `true` if either `XAI_API_KEY` or `GROK_CODE_XAI_API_KEY` is set.
+/// Returns `true` when an environment or in-memory credential is available.
 pub fn has_xai_api_key_env() -> bool {
     read_xai_api_key_env().is_ok()
 }

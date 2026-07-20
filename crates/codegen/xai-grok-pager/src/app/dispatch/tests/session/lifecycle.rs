@@ -1307,9 +1307,9 @@ fn gated_worktree_with_none_companions_preserves_stashed_label_and_ref() {
     assert!(!app.deferred_startup.worktree);
 }
 /// `/login` from inside a session must move to the welcome screen (the
-/// only view that renders the auth flow / external-provider URL) and
+/// only view that renders the API-key entry) and
 /// stash the agent view for restoration. This is the core fix for the
-/// "external auth provider /login does nothing mid-session" bug.
+/// "login does nothing mid-session" bug.
 #[test]
 fn login_mid_session_switches_to_welcome_and_stashes_view() {
     let mut app = test_app_with_agent();
@@ -1317,13 +1317,8 @@ fn login_mid_session_switches_to_welcome_and_stashes_view() {
     let effects = dispatch(Action::Login, &mut app);
     assert_eq!(app.active_view, ActiveView::Welcome);
     assert_eq!(app.auth_return_view, Some(ActiveView::Agent(AgentId(0))));
-    assert!(matches!(app.auth_state, AuthState::Authenticating { .. }));
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::Authenticate { .. })),
-        "must still kick off the auth flow",
-    );
+    assert!(matches!(app.auth_state, AuthState::ApiKeyEntry { .. }));
+    assert!(effects.is_empty(), "key entry waits for an explicit save");
 }
 /// A mid-session `/login` switches to the welcome view to host the auth
 /// flow; that transition must collapse any expanded announcement so it

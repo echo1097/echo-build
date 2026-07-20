@@ -22,9 +22,18 @@ use agent_client_protocol as acp;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use indexmap::IndexMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use xai_acp_lib::AcpAgentTx;
+
+static OPENROUTER_SPLASH_ANNOUNCEMENT: LazyLock<xai_grok_announcements::RemoteAnnouncement> =
+    LazyLock::new(|| xai_grok_announcements::RemoteAnnouncement {
+        message: Some(
+            "A fork of Grok Build by SpaceXAI for the OpenRouter ecosystem.".to_owned(),
+        ),
+        ..Default::default()
+    });
+
 /// State for the "New Worktree" popup dialog on the welcome screen.
 #[derive(Debug, Default)]
 pub struct NewWorktreeDialogState {
@@ -388,6 +397,12 @@ pub enum AuthState {
     /// Login required -- show login menu on welcome screen.
     /// `error` is set after a failed auth attempt so the user sees what went wrong.
     Pending { error: Option<String> },
+    /// OpenRouter API-key entry is visible on the welcome screen.
+    ApiKeyEntry {
+        request_seq: u64,
+        saving: bool,
+        error: Option<String>,
+    },
     /// Auth flow is in progress.
     Authenticating {
         /// Sequence number for this auth attempt (stale results are ignored).
@@ -3285,6 +3300,50 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                     return InputOutcome::Action(Action::Login);
                 }
             }
+            AuthState::ApiKeyEntry { saving, .. } => {
+                if key!(Esc).matches(key)
+                    || key!('q', CONTROL).matches(key)
+                    || key!('c', CONTROL).matches(key)
+                {
+                    ctx.auth_code_input.reset();
+                    if ctx.mid_session_login {
+                        return InputOutcome::Action(Action::CancelLogin);
+                    }
+                    return InputOutcome::Action(Action::QuitConfirmed);
+                }
+                if *saving {
+                    return InputOutcome::Unchanged;
+                }
+                if key!(Enter).matches(key) {
+                    let trimmed = ctx.auth_code_input.text().trim().to_string();
+                    if !trimmed.is_empty() {
+                        return InputOutcome::Action(Action::SubmitApiKey(trimmed));
+                    }
+                    return InputOutcome::Unchanged;
+                }
+                let outcome = if crate::input::key::is_paste_key(key) {
+                    let Some(text) = crate::clipboard::system_clipboard_get() else {
+                        return InputOutcome::Unchanged;
+                    };
+                    ctx.auth_code_input.insert_paste(&text)
+                } else if key.modifiers.intersects(
+                    crossterm::event::KeyModifiers::CONTROL
+                        | crossterm::event::KeyModifiers::ALT
+                        | crossterm::event::KeyModifiers::SUPER,
+                ) && !crate::input::key::is_altgr(key.modifiers)
+                {
+                    return InputOutcome::Changed;
+                } else {
+                    ctx.auth_code_input
+                        .handle_key_with_insert_policy(key, |character| !character.is_control())
+                };
+                return match outcome {
+                    LineEditOutcome::TextChanged
+                    | LineEditOutcome::CursorChanged
+                    | LineEditOutcome::HandledNoChange => InputOutcome::Changed,
+                    LineEditOutcome::Unhandled => InputOutcome::Unchanged,
+                };
+            }
             AuthState::Authenticating { .. } if *ctx.show_raw_url => {
                 if key!('q', CONTROL).matches(key) || key!('c', CONTROL).matches(key) {
                     return InputOutcome::Action(Action::HideRawAuthUrl);
@@ -3359,6 +3418,10 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                 mode: AuthMode::Loopback,
                 ..
             } => {
+                let _ = ctx.auth_code_input.insert_paste(text);
+                return InputOutcome::Changed;
+            }
+            AuthState::ApiKeyEntry { saving: false, .. } => {
                 let _ = ctx.auth_code_input.insert_paste(text);
                 return InputOutcome::Changed;
             }
@@ -3942,19 +4005,12 @@ impl AppView {
                             Some(eff) => format!("{model_name_base} ({eff})"),
                             None => model_name_base,
                         };
-                        let hero_cta = crate::views::announcements::promo_cta(
-                            &self.active_announcements,
-                            &self.hidden_announcement_ids,
-                        );
-                        let hero_announcement = hero_cta
-                            .map(|(owner, _, _)| owner)
-                            .or_else(|| {
-                                crate::views::announcements::first_session_announcement(
-                                    &self.active_announcements,
-                                    &self.hidden_announcement_ids,
-                                )
-                            })
-                            .or(self.announcement.as_ref());
+                        let hero_announcement =
+                            crate::views::announcements::first_session_announcement(
+                                &self.active_announcements,
+                                &self.hidden_announcement_ids,
+                            )
+                            .or(Some(&OPENROUTER_SPLASH_ANNOUNCEMENT));
                         let welcome_params = crate::views::welcome::WelcomeRenderParams {
                             prompt_focus: if self.welcome_prompt_focused {
                                 WelcomePromptFocus::Focused
@@ -4008,7 +4064,7 @@ impl AppView {
                             changelog_bullets: &self.changelog_bullets,
                             changelog_has_full_notes: self.changelog_markdown.is_some(),
                             welcome_announcement_expanded: self.welcome_announcement.expanded,
-                            upgrade_cta: hero_cta.map(|(_owner, label, _)| label),
+                            upgrade_cta: None,
                         };
                         let result = crate::views::welcome::render_welcome(
                             view_area,
@@ -8508,6 +8564,59 @@ pub(crate) mod tests {
         };
         let outcome = app.handle_input(&key_event(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(outcome, InputOutcome::Action(Action::Quit)));
+    }
+    #[test]
+    fn openrouter_key_entry_masks_input_state_and_submits_trimmed_key() {
+        let mut app = test_app();
+        app.auth_state = AuthState::ApiKeyEntry {
+            request_seq: 7,
+            saving: false,
+            error: None,
+        };
+
+        for character in "  sk-or-test  ".chars() {
+            let outcome =
+                app.handle_input(&key_event(KeyCode::Char(character), KeyModifiers::NONE));
+            assert!(matches!(outcome, InputOutcome::Changed));
+        }
+
+        let outcome = app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SubmitApiKey(api_key)) if api_key == "sk-or-test"
+        ));
+        assert!(app.welcome_prompt.text().is_empty());
+    }
+
+    #[test]
+    fn openrouter_key_entry_ignores_empty_submit_and_accepts_paste() {
+        let mut app = test_app();
+        app.auth_state = AuthState::ApiKeyEntry {
+            request_seq: 8,
+            saving: false,
+            error: None,
+        };
+
+        let outcome = app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(outcome, InputOutcome::Unchanged));
+
+        let outcome = app.handle_input(&Event::Paste("secret-key\r\n".to_owned()));
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert_eq!(app.auth_code_input.text(), "secret-key");
+    }
+
+    #[test]
+    fn openrouter_key_entry_blocks_edits_while_saving() {
+        let mut app = test_app();
+        app.auth_state = AuthState::ApiKeyEntry {
+            request_seq: 9,
+            saving: true,
+            error: None,
+        };
+
+        let outcome = app.handle_input(&key_event(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(matches!(outcome, InputOutcome::Unchanged));
+        assert!(app.auth_code_input.text().is_empty());
     }
     #[test]
     fn authenticating_command_esc_quits() {

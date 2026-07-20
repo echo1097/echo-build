@@ -28,6 +28,7 @@ chrono = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
 ignore = { workspace = true }
 jsonschema = { workspace = true }
+keyring = { workspace = true }
 futures = { workspace = true }
 glob = { workspace = true }
 globset = { workspace = true }
