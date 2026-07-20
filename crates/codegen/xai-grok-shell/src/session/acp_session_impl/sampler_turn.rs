@@ -136,6 +136,9 @@ impl SessionActor {
     /// (`prepare_tool_definitions_*`); this applies only the `web_search` drop
     /// under backend search and the `ToolSpec::from` mapping.
     pub(crate) fn turn_base_tool_specs(&self, defs: &[ToolDefinition]) -> Vec<ToolSpec> {
+        if !self.models_manager.current_model_agent_capable() {
+            return Vec::new();
+        }
         let use_backend_search =
             self.agent.borrow().backend_search_enabled() && self.supports_backend_search.get();
         defs.iter()
@@ -270,43 +273,7 @@ impl SessionActor {
                 stream_tool_calls: None,
             });
         let creds = self.chat_state_handle.get_credentials().await;
-        let model_facts = self.model_auth_facts(cfg.model.as_str());
-        let auth_method = self.auth_method_id.load();
-        let gate =
-            SessionTokenAuthGate::new(auth_method.as_deref(), model_facts.byok, &cfg.base_url);
-        let use_bearer_resolver = gate.active();
-        self.log_auth_gate_unknown("reconstruct_full_config", gate, &cfg.base_url);
-        let auth_scheme = model_facts.auth_scheme;
-        let mut extra_headers = cfg.extra_headers;
-        crate::agent::config::inject_url_derived_headers(
-            &mut extra_headers,
-            creds.alpha_test_key.as_deref(),
-            &cfg.base_url,
-        );
-        let compaction_at_tokens = self.compaction_at_tokens.get();
-        let compactions_remaining = self.compactions_remaining.get();
-        if compactions_remaining.is_some() || compaction_at_tokens.is_some() {
-            let has_compaction_summary = self
-                .chat_state_handle
-                .get_last_compaction_prompt_index()
-                .await
-                .is_some();
-            if let Some(value) =
-                compactions_remaining.and_then(|c| c.resolve(has_compaction_summary))
-            {
-                extra_headers.insert("x-compactions-remaining".to_string(), value.to_string());
-            }
-            if !has_compaction_summary
-                && let Some(value) = compaction_at_tokens.and_then(|c| {
-                    c.resolve(
-                        cfg.context_window.get(),
-                        self.compaction.threshold_percent.get(),
-                    )
-                })
-            {
-                extra_headers.insert("x-compaction-at".to_string(), value.to_string());
-            }
-        }
+        let extra_headers = indexmap::IndexMap::new();
         SamplingConfig {
             api_key: creds.api_key,
             base_url: cfg.base_url,
@@ -314,8 +281,8 @@ impl SessionActor {
             max_completion_tokens: cfg.max_completion_tokens,
             temperature: cfg.temperature,
             top_p: cfg.top_p,
-            api_backend: cfg.api_backend,
-            auth_scheme,
+            api_backend: crate::sampling::ApiBackend::ChatCompletions,
+            auth_scheme: xai_grok_sampler::AuthScheme::Bearer,
             extra_headers,
             context_window: cfg.context_window.get(),
             client_version: creds.client_version,
@@ -325,29 +292,14 @@ impl SessionActor {
             stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
             idle_timeout_secs: None,
             client_identifier: self.client_identifier.clone(),
-            deployment_id: crate::managed_config::resolve_deployment_id(
-                crate::managed_config::resolve_deployment_key().as_deref(),
-            ),
-            user_id: self
-                .auth_manager
-                .as_ref()
-                .and_then(|am| am.current_or_expired())
-                .filter(|a| a.is_xai_auth())
-                .map(|a| a.user_id),
+            deployment_id: None,
+            user_id: None,
             origin_client: self.origin_client.clone(),
             attribution_callback: self.attribution_callback.clone(),
-            bearer_resolver: if use_bearer_resolver {
-                self.auth_manager
-                    .as_ref()
-                    .map(|am| -> xai_grok_sampler::SharedBearerResolver {
-                        std::sync::Arc::new(AuthManagerBearerResolver(am.clone()))
-                    })
-            } else {
-                None
-            },
-            supports_backend_search: self.supports_backend_search.get(),
-            compactions_remaining: self.compactions_remaining.get(),
-            compaction_at_tokens: self.compaction_at_tokens.get(),
+            bearer_resolver: None,
+            supports_backend_search: false,
+            compactions_remaining: None,
+            compaction_at_tokens: None,
             doom_loop_recovery: self.doom_loop_recovery,
             header_injector: Some(std::sync::Arc::new(TraceContextInjector)),
         }

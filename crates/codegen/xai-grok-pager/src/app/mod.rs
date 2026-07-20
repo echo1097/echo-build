@@ -185,28 +185,15 @@ pub(crate) fn voice_mode_config_value() -> Option<bool> {
 }
 /// Resolve voice availability.
 ///
-/// Precedence: requirements > `GROK_VOICE_MODE` > config/managed
-/// `[features] voice_mode` > remote `voice_mode_enabled` > default on.
-///
-/// When `is_api_key` and the only off-source is remote, force on. Requirement /
-/// env / config `false` still wins.
+/// The bundled voice service is xAI-owned, so the OpenRouter runtime keeps it
+/// disabled regardless of legacy local or remote feature flags.
 pub(crate) fn resolve_voice_mode_enabled(
-    requirement: Option<bool>,
-    config: Option<bool>,
-    remote: Option<bool>,
-    is_api_key: bool,
+    _requirement: Option<bool>,
+    _config: Option<bool>,
+    _remote: Option<bool>,
+    _is_api_key: bool,
 ) -> bool {
-    use xai_grok_shell::agent::config::{BoolFlag, ConfigSource};
-    let resolved = BoolFlag::env("GROK_VOICE_MODE")
-        .requirement(requirement)
-        .config(config)
-        .feature_flag(remote)
-        .default(true)
-        .resolve();
-    if resolved.value {
-        return true;
-    }
-    is_api_key && resolved.source == ConfigSource::Remote
+    false
 }
 /// Resolve from live policy + env + remote + API-key state.
 pub(crate) fn resolve_voice_mode_live(remote: Option<bool>, is_api_key: bool) -> bool {
@@ -221,8 +208,8 @@ pub(crate) fn resolve_voice_mode_live(remote: Option<bool>, is_api_key: bool) ->
 mod voice_gate_tests {
     use super::resolve_voice_mode_enabled;
     #[test]
-    fn api_key_force_on_over_remote_kill_only() {
-        assert!(resolve_voice_mode_enabled(None, None, Some(false), true));
+    fn openrouter_runtime_keeps_xai_voice_disabled() {
+        assert!(!resolve_voice_mode_enabled(None, None, Some(true), true));
         assert!(!resolve_voice_mode_enabled(None, None, Some(false), false));
     }
     #[test]

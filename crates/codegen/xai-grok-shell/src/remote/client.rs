@@ -659,6 +659,22 @@ pub async fn fetch_login_device_flow(cli_chat_proxy_base_url: &str) -> Option<bo
 }
 /// Default context window (256k) when the remote endpoint doesn't provide one.
 pub(crate) const DEFAULT_CONTEXT_WINDOW: u64 = 256_000;
+
+fn openrouter_endpoint_allowed(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    host == "openrouter.ai"
+        || host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Vec<serde_json::Value>,
@@ -688,21 +704,17 @@ impl ListModelsEndpoint {
         endpoints: &crate::agent::config::EndpointsConfig,
         fetch_auth: crate::agent::models::ModelFetchAuth,
     ) -> Self {
-        if endpoints.has_custom_endpoint() {
-            Self {
-                url: endpoints.resolve_models_list_url(),
-                auth: EndpointAuth::ApiKey,
-            }
-        } else if fetch_auth == crate::agent::models::ModelFetchAuth::ApiKey {
-            Self {
-                url: format!("{}/models", endpoints.xai_api_base_url),
-                auth: EndpointAuth::ApiKey,
-            }
-        } else {
-            Self {
-                url: endpoints.resolve_models_list_url(),
-                auth: EndpointAuth::Session,
-            }
+        let _ = fetch_auth;
+        let base = endpoints.models_list_url.clone().unwrap_or_else(|| {
+            format!(
+                "{}/models",
+                endpoints.xai_api_base_url.trim_end_matches('/')
+            )
+        });
+        let separator = if base.contains('?') { '&' } else { '?' };
+        Self {
+            url: format!("{base}{separator}output_modalities=text"),
+            auth: EndpointAuth::ApiKey,
         }
     }
 }
@@ -720,20 +732,24 @@ pub(crate) fn fetch_models_blocking(
     let client = crate::http::shared_blocking_client();
     let source = ListModelsEndpoint::from_endpoints(endpoints, fetch_auth);
     let inference_base_url = endpoints.resolve_inference_base_url();
+    if !openrouter_endpoint_allowed(&source.url)
+        || !openrouter_endpoint_allowed(&inference_base_url)
+    {
+        return Err(BackendError::Auth(
+            "OpenRouter credentials may only be sent to OpenRouter or a loopback test server"
+                .into(),
+        ));
+    }
     tracing::info!("Fetching models from {}", source.url);
     let mut request = client.get(&source.url);
     match source.auth {
         EndpointAuth::ApiKey => {
-            let api_key = crate::agent::auth_method::read_xai_api_key_env()
-                .or_else(|_| {
-                    auth.map(|a| a.key.clone())
-                        .ok_or(std::env::VarError::NotPresent)
-                })
-                .map_err(|_| {
-                    BackendError::Auth(
-                        "No API key for custom models endpoint. Set XAI_API_KEY.".into(),
-                    )
-                })?;
+            let _ = auth;
+            let api_key = crate::agent::auth_method::read_xai_api_key_env().map_err(|_| {
+                BackendError::Auth(
+                    "OpenRouter API key is not available in the credential store.".into(),
+                )
+            })?;
             request = request.header("Authorization", format!("Bearer {}", api_key));
         }
         EndpointAuth::Session => {
@@ -757,9 +773,11 @@ pub(crate) fn fetch_models_blocking(
     let response = request.send()?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
-        let body = response.text().unwrap_or_default();
-        tracing::warn!("Failed to fetch models: {} - {}", status, body);
-        return Err(BackendError::RequestFailed { status, body });
+        tracing::warn!(status, "OpenRouter model catalog request failed");
+        return Err(BackendError::RequestFailed {
+            status,
+            body: "OpenRouter model catalog request failed".to_string(),
+        });
     }
     let etag = response
         .headers()
@@ -800,12 +818,11 @@ pub fn parse_remote_model_value(
         .or_else(|| id.clone())
         .or_else(|| meta.and_then(|m| get_string(m, "model")))
         .or_else(|| meta.and_then(|m| get_string(m, "modelId")))?;
-    let base_url = get_string(obj, "baseUrl")
-        .or_else(|| get_string(obj, "base_url"))
-        .unwrap_or_else(|| default_base_url.to_owned());
+    let base_url = default_base_url.to_owned();
     let name = get_string(obj, "name").or_else(|| Some(model.clone()));
     let context_window = get_u64(obj, "contextWindow")
         .or_else(|| get_u64(obj, "context_window"))
+        .or_else(|| get_u64(obj, "context_length"))
         .or_else(|| meta.and_then(|m| get_u64(m, "contextWindow")))
         .or_else(|| meta.and_then(|m| get_u64(m, "totalContextTokens")))
         .unwrap_or(DEFAULT_CONTEXT_WINDOW);
@@ -826,9 +843,52 @@ pub fn parse_remote_model_value(
             _ => None,
         })
         .unwrap_or_default();
+    let architecture = obj.get("architecture").and_then(|value| value.as_object());
+    let input_modalities = architecture
+        .map(|value| get_string_vec(value, "input_modalities"))
+        .unwrap_or_default();
+    let output_modalities = architecture
+        .map(|value| get_string_vec(value, "output_modalities"))
+        .unwrap_or_default();
+    if !output_modalities.is_empty() && !output_modalities.iter().any(|value| value == "text") {
+        return None;
+    }
+    let supported_parameters = get_string_vec(obj, "supported_parameters");
+    let agent_capable = supported_parameters.iter().any(|value| value == "tools");
+    let reasoning = obj.get("reasoning").and_then(|value| value.as_object());
+    let default_reasoning_effort = reasoning
+        .and_then(|value| get_string(value, "default_effort"))
+        .and_then(|value| value.parse().ok());
+    let reasoning_mandatory = reasoning
+        .and_then(|value| value.get("mandatory"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let reasoning_efforts = reasoning
+        .map(|value| {
+            let default_effort = get_string(value, "default_effort");
+            value
+                .get("supported_efforts")
+                .and_then(|efforts| efforts.as_array())
+                .map(|efforts| {
+                    let normalized = efforts
+                        .iter()
+                        .filter_map(|effort| effort.as_str())
+                        .map(|effort| {
+                            serde_json::json!({
+                                "value": effort,
+                                "default": default_effort.as_deref() == Some(effort),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    xai_grok_sampling_types::parse_reasoning_effort_options(&normalized)
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
     Some(crate::agent::config::ModelEntryConfig {
         id,
         model,
+        canonical_slug: get_string(obj, "canonical_slug"),
         base_url,
         name,
         description: get_string(obj, "description"),
@@ -837,9 +897,13 @@ pub fn parse_remote_model_value(
             .and_then(|v| u32::try_from(v).ok()),
         temperature: get_f64(obj, "temperature").map(|v| v as f32),
         top_p: get_f64(obj, "topP").or_else(|| get_f64(obj, "top_p")).map(|v| v as f32),
-        api_key: get_string(obj, "apiKey").or_else(|| get_string(obj, "api_key")),
-        env_key: get_env_keys(obj, "envKey").or_else(|| get_env_keys(obj, "env_key")),
-        api_backend,
+        api_key: None,
+        env_key: None,
+        api_backend: if obj.contains_key("context_length") {
+            crate::sampling::ApiBackend::ChatCompletions
+        } else {
+            api_backend
+        },
         context_window,
         auto_compact_threshold_percent: get_u64(obj, "autoCompactThresholdPercent")
             .or_else(|| get_u64(obj, "auto_compact_threshold_percent"))
@@ -847,9 +911,8 @@ pub fn parse_remote_model_value(
         system_prompt_label: get_string(obj, "systemPromptLabel")
             .or_else(|| get_string(obj, "system_prompt_label"))
             .filter(|s| !s.trim().is_empty()),
-        extra_headers: get_string_map(obj, "extraHeaders"),
-        api_base_url: get_string(obj, "apiBaseUrl")
-            .or_else(|| get_string(obj, "api_base_url")),
+        extra_headers: Default::default(),
+        api_base_url: None,
         use_concise: obj
             .get("useConcise")
             .or_else(|| obj.get("use_concise"))
@@ -876,20 +939,25 @@ pub fn parse_remote_model_value(
         reasoning_effort: get_string(obj, "reasoningEffort")
             .or_else(|| get_string(obj, "reasoning_effort"))
             .or_else(|| meta.and_then(|m| get_string(m, "reasoningEffort")))
-            .and_then(|s| s.parse().ok()),
+            .and_then(|s| s.parse().ok())
+            .or(default_reasoning_effort),
         supports_reasoning_effort: obj
             .get("supportsReasoningEffort")
             .or_else(|| obj.get("supports_reasoning_effort"))
             .or_else(|| meta.and_then(|m| m.get("supportsReasoningEffort")))
             .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        reasoning_efforts: obj
+            .unwrap_or(reasoning.is_some()),
+        reasoning_efforts: if reasoning_efforts.is_empty() { obj
             .get("reasoningEfforts")
             .or_else(|| obj.get("reasoning_efforts"))
             .or_else(|| meta.and_then(|m| m.get("reasoningEfforts")))
             .and_then(|v| v.as_array())
             .map(|arr| xai_grok_sampling_types::parse_reasoning_effort_options(arr))
-            .unwrap_or_default(),
+            .unwrap_or_default() } else { reasoning_efforts },
+        agent_capable,
+        input_modalities,
+        supported_parameters,
+        reasoning_mandatory,
         supports_backend_search: obj
             .get("supportsBackendSearch")
             .or_else(|| obj.get("supports_backend_search"))
@@ -944,6 +1012,17 @@ pub fn parse_remote_model_value(
 }
 fn get_string(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
     obj.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+fn get_string_vec(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Vec<String> {
+    obj.get(key)
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 /// Parse `env_key` / `envKey` as a single string or a string array.
 fn get_env_keys(
@@ -1405,6 +1484,113 @@ mod tests {
         assert_eq!(result.model, "grok-3");
         assert_eq!(result.base_url, "https://api.x.ai/v1");
         assert_eq!(result.name.as_deref(), Some("grok-3"));
+    }
+
+    #[test]
+    fn parses_openrouter_catalog_capabilities_and_ignores_credential_overrides() {
+        use xai_grok_sampling_types::ReasoningEffort;
+
+        let value = serde_json::json!({
+            "id": "anthropic/claude-test",
+            "canonical_slug": "anthropic/claude-canonical",
+            "name": "Claude Test",
+            "description": "Representative tool and vision model",
+            "context_length": 1_000_000,
+            "architecture": {
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"]
+            },
+            "top_provider": { "max_completion_tokens": 128_000 },
+            "supported_parameters": ["tools", "reasoning", "structured_outputs"],
+            "reasoning": {
+                "mandatory": true,
+                "default_effort": "high",
+                "supported_efforts": ["low", "high"]
+            },
+            "base_url": "https://api.x.ai/v1",
+            "api_key": "must-not-survive",
+            "extraHeaders": { "X-XAI-Token-Auth": "must-not-survive" }
+        });
+        let model = parse_remote_model_value(&value, "https://openrouter.ai/api/v1").unwrap();
+
+        assert_eq!(model.model, "anthropic/claude-test");
+        assert_eq!(
+            model.canonical_slug.as_deref(),
+            Some("anthropic/claude-canonical")
+        );
+        assert_eq!(model.base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(model.context_window.get(), 1_000_000);
+        assert_eq!(model.max_completion_tokens, None);
+        assert!(model.agent_capable);
+        assert_eq!(model.input_modalities, ["text", "image"]);
+        assert!(
+            model
+                .supported_parameters
+                .iter()
+                .any(|value| value == "tools")
+        );
+        assert!(model.reasoning_mandatory);
+        assert_eq!(model.reasoning_effort, Some(ReasoningEffort::High));
+        assert_eq!(model.reasoning_efforts.len(), 2);
+        assert!(model.api_key.is_none());
+        assert!(model.env_key.is_none());
+        assert!(model.extra_headers.is_empty());
+    }
+
+    #[test]
+    fn openrouter_provider_output_ceiling_is_not_used_as_a_request_default() {
+        let value = serde_json::json!({
+            "id": "moonshotai/kimi-k2.7-code",
+            "context_length": 262_144,
+            "top_provider": { "max_completion_tokens": 262_144 }
+        });
+        let model = parse_remote_model_value(&value, "https://openrouter.ai/api/v1").unwrap();
+
+        assert_eq!(model.max_completion_tokens, None);
+    }
+
+    #[test]
+    fn explicit_request_output_default_is_still_supported() {
+        let value = serde_json::json!({
+            "id": "custom/model",
+            "context_length": 128_000,
+            "max_completion_tokens": 8_192
+        });
+        let model = parse_remote_model_value(&value, "http://127.0.0.1:3000/v1").unwrap();
+
+        assert_eq!(model.max_completion_tokens, Some(8_192));
+    }
+
+    #[test]
+    fn openrouter_catalog_keeps_chat_only_text_models_and_rejects_non_text_output() {
+        let chat_only = serde_json::json!({
+            "id": "provider/chat-only",
+            "context_length": 8_192,
+            "architecture": {
+                "input_modalities": ["text"],
+                "output_modalities": ["text"]
+            },
+            "supported_parameters": ["temperature"]
+        });
+        let model = parse_remote_model_value(&chat_only, "https://openrouter.ai/api/v1").unwrap();
+        assert!(!model.agent_capable);
+        assert_eq!(model.context_window.get(), 8_192);
+
+        let audio_only = serde_json::json!({
+            "id": "provider/audio-only",
+            "context_length": 32_000,
+            "architecture": { "output_modalities": ["audio"] }
+        });
+        assert!(parse_remote_model_value(&audio_only, "https://openrouter.ai/api/v1").is_none());
+    }
+
+    #[test]
+    fn legacy_provider_urls_are_rejected_before_authentication() {
+        assert!(!openrouter_endpoint_allowed("https://api.x.ai/v1"));
+        assert!(!openrouter_endpoint_allowed("https://code.grok.com/models"));
+        assert!(!openrouter_endpoint_allowed("https://example.com/v1"));
+        assert!(openrouter_endpoint_allowed("https://openrouter.ai/api/v1"));
+        assert!(openrouter_endpoint_allowed("http://127.0.0.1:3000"));
     }
     #[test]
     fn parse_model_field_takes_priority_over_id() {

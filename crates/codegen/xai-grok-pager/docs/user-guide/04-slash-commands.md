@@ -234,12 +234,12 @@ Enter plan mode.
 /plan [description]
 ```
 
-### `/view-plan`
+### `/auth`
 
-Open the current saved plan preview. Aliases: `/show-plan`, `/plan-view`.
+Manage the current OpenRouter API key. The key remains hidden; you can update it or clear it and log out.
 
 ```
-/view-plan
+/auth
 ```
 
 ---

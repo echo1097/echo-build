@@ -5,6 +5,7 @@
 //! construction.
 pub mod always_approve;
 pub mod announcements;
+pub mod auth;
 pub mod auto;
 pub mod btw;
 pub mod cd;
@@ -63,7 +64,6 @@ pub mod timestamps;
 pub mod toggle_mouse_reporting;
 pub mod transcript;
 pub mod usage;
-pub mod view_plan;
 pub mod vim_mode;
 pub mod voice;
 use super::command::SlashCommand;
@@ -79,7 +79,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(docs::DocsCommand),
         Arc::new(home::HomeCommand),
         Arc::new(new::NewCommand),
-        
         Arc::new(fork::ForkCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(copy::CopyCommand),
@@ -112,12 +111,11 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(announcements::AnnouncementsCommand),
         Arc::new(remember::RememberCommand),
         Arc::new(plan::PlanCommand),
-        Arc::new(view_plan::ViewPlanCommand),
+        Arc::new(auth::AuthCommand),
         Arc::new(resume::ResumeCommand),
         Arc::new(mcps::McpsCommand),
         Arc::new(btw::BtwCommand),
         Arc::new(recap::RecapCommand),
-        
         Arc::new(terminal_setup::TerminalSetupCommand),
         Arc::new(voice::VoiceCommand),
         Arc::new(loop_cmd::LoopCommand),
@@ -200,7 +198,7 @@ mod tests {
         assert!(reg.get("compact").is_some());
         assert!(reg.get("model").is_some());
         assert!(reg.get("home").is_some());
-        assert!(reg.get("view-plan").is_some());
+        assert!(reg.get("auth").is_some());
         reg.set_available_tools(std::collections::HashSet::from([
             "scheduler_create".to_string()
         ]));
@@ -238,8 +236,7 @@ mod tests {
         assert!(reg.get("clear").is_some());
         assert!(reg.get("m").is_some());
         assert!(reg.get("welcome").is_some());
-        assert!(reg.get("show-plan").is_some());
-        assert!(reg.get("plan-view").is_some());
+        assert!(reg.get("view-plan").is_none());
     }
     #[test]
     fn alias_resolves_to_same_command() {
@@ -273,12 +270,15 @@ mod tests {
         assert!(matches!(result, CommandResult::Action(Action::ExitSession)));
     }
     #[test]
-    fn view_plan_returns_show_plan_action() {
+    fn auth_returns_show_auth_management_action() {
         let models = ModelState::default();
         let mut ctx = make_ctx(&models);
-        let cmd = view_plan::ViewPlanCommand;
+        let cmd = auth::AuthCommand;
         let result = cmd.run(&mut ctx, "");
-        assert!(matches!(result, CommandResult::Action(Action::ShowPlan)));
+        assert!(matches!(
+            result,
+            CommandResult::Action(Action::ShowAuthManagement)
+        ));
     }
     #[test]
     fn compact_no_args_returns_queue_command() {
@@ -408,7 +408,7 @@ mod tests {
         assert!(
             items
                 .iter()
-                .any(|i| i.display == "Grok 4.3" && i.insert_text == "Grok 4.3")
+                .any(|i| i.display.starts_with("Grok 4.3") && i.insert_text == "Grok 4.3")
         );
     }
     #[test]

@@ -34,6 +34,9 @@ impl ModelFetchAuth {
     /// can't redirect model fetching from the deployment's entitlement-gated
     /// proxy to a raw `/v1/models` endpoint that lists the full model registry.
     pub(crate) fn resolve(endpoints: &config::EndpointsConfig, has_cached_session: bool) -> Self {
+        if crate::auth::cached_api_key().is_some() {
+            return Self::ApiKey;
+        }
         if endpoints.has_custom_endpoint() {
             Self::CustomEndpoint
         } else if has_cached_session {
@@ -486,6 +489,31 @@ impl ModelsManager {
             .get(model_id)
             .map(|e| e.info().supports_backend_search)
             .unwrap_or(false)
+    }
+
+    pub fn current_model_agent_capable(&self) -> bool {
+        let current = self.current_model_id();
+        self.inner
+            .models
+            .read()
+            .get(current.0.as_ref())
+            .map(|entry| entry.info.agent_capable)
+            .unwrap_or(false)
+    }
+
+    pub fn current_model_supports_parameter(&self, parameter: &str) -> bool {
+        let current = self.current_model_id();
+        self.inner
+            .models
+            .read()
+            .get(current.0.as_ref())
+            .is_some_and(|entry| {
+                entry
+                    .info
+                    .supported_parameters
+                    .iter()
+                    .any(|value| value == parameter)
+            })
     }
 
     pub fn model_compactions_remaining(
@@ -996,12 +1024,10 @@ impl ModelsManager {
         let cfg = self.inner.cfg.read().clone();
         let endpoints = cfg.endpoints.clone();
         let fetch_auth = *self.inner.fetch_auth.read();
-        let auth_manager = self.inner.auth_manager.clone();
         let mgr = self.clone();
 
         tokio::task::spawn(async move {
-            let auth = auth_manager.auth().await.ok();
-            let new_prefetched = fetch_models_async(endpoints, auth, fetch_auth).await;
+            let new_prefetched = fetch_models_async(endpoints, None, fetch_auth).await;
             if !mgr.apply_refresh_result(&cfg, new_prefetched, new_etag) {
                 return;
             }
@@ -1062,8 +1088,7 @@ impl ModelsManager {
             tracing::info!("model catalog refresh skipped: remote_fetch disabled");
             return;
         }
-        let auth = self.inner.auth_manager.auth().await.ok();
-        let has_auth = auth.is_some();
+        let has_auth = crate::auth::cached_api_key().is_some();
         let fetch_auth = *self.inner.fetch_auth.read();
         let cfg = self.inner.cfg.read().clone();
         xai_grok_telemetry::unified_log::info(
@@ -1074,7 +1099,7 @@ impl ModelsManager {
                 "fetch_auth": format!("{fetch_auth:?}"),
             })),
         );
-        let new_prefetched = fetch_models_async(cfg.endpoints.clone(), auth, fetch_auth).await;
+        let new_prefetched = fetch_models_async(cfg.endpoints.clone(), None, fetch_auth).await;
         let success = self.apply_refresh_result(&cfg, new_prefetched, None);
         if success {
             xai_grok_telemetry::unified_log::info(
@@ -1201,9 +1226,12 @@ pub enum RefreshStrategy {
 
 const MODELS_CACHE_FILE: &str = "models_cache.json";
 const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+const MODELS_CACHE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ModelsCache {
+    #[serde(default)]
+    schema_version: u32,
     fetched_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     grok_version: Option<String>,
@@ -1261,6 +1289,10 @@ impl ModelsCacheManager {
     ) -> Option<CacheResult> {
         let data = std::fs::read(&self.path).ok()?;
         let cache: ModelsCache = serde_json::from_slice(&data).ok()?;
+        if cache.schema_version != MODELS_CACHE_SCHEMA_VERSION {
+            tracing::debug!("models cache schema mismatch");
+            return None;
+        }
         if cache.grok_version.as_deref() != Some(xai_grok_version::VERSION) {
             tracing::debug!("models cache version mismatch");
             return None;
@@ -1297,6 +1329,7 @@ impl ModelsCacheManager {
         origin: &str,
     ) {
         let cache = ModelsCache {
+            schema_version: MODELS_CACHE_SCHEMA_VERSION,
             fetched_at: Utc::now(),
             grok_version: Some(xai_grok_version::VERSION.to_string()),
             auth_method: Some(auth_method),
@@ -1423,18 +1456,8 @@ pub(crate) fn prefetch_models_and_settings_blocking(
 ) {
     let remote_fetch_enabled = crate::util::config::resolve_remote_fetch_enabled();
     let models = prefetch_models_blocking_gated(endpoints, auth, fetch_auth, remote_fetch_enabled);
-    // Settings need a grok.com session; skip for BYOK.
-    let settings = match auth {
-        Some(auth) if remote_fetch_enabled => {
-            let _timer = crate::instrumentation_timer!("startup.early_settings_fetch");
-            crate::remote::fetch_settings_blocking(
-                &endpoints.proxy_url(),
-                auth,
-                endpoints.alpha_test_key.as_deref(),
-            )
-        }
-        _ => None,
-    };
+    let _ = auth;
+    let settings = None;
     (models, settings)
 }
 
@@ -1465,11 +1488,7 @@ fn prefetch_models_blocking_gated(
     let _timer = crate::instrumentation_timer!("startup.fetch_models_blocking");
     match fetch_models_blocking(endpoints, auth, fetch_auth) {
         Ok(FetchModelsResult { models, etag }) if !models.is_empty() => {
-            let api_base_url_override = match fetch_auth {
-                ModelFetchAuth::ApiKey => Some(endpoints.xai_api_base_url.clone()),
-                _ => None,
-            };
-            let map = build_prefetched_map(models, api_base_url_override);
+            let map = build_prefetched_map(models, None);
 
             // NOTE: inheriting context_window / agent_type / api_backend
             // from hardcoded defaults is handled centrally in
@@ -1508,11 +1527,7 @@ struct PrefetchEnv {
 fn resolve_prefetch_env_with_auth(auth: Option<GrokAuth>) -> Option<PrefetchEnv> {
     let _timer = crate::instrumentation_timer!("startup.early_prefetch_launch");
     // Config-aware (not env-only) so the prefetch can't leak the bearer to api.x.ai.
-    let mut endpoints = config::EndpointsConfig::from_effective_config();
-
-    if endpoints.deployment_key.is_none() {
-        endpoints.deployment_key = crate::managed_config::resolve_deployment_key();
-    }
+    let endpoints = config::EndpointsConfig::from_effective_config();
 
     resolve_prefetch_env_from_parts(
         auth,
@@ -1557,9 +1572,15 @@ fn resolve_prefetch_env_from_parts(
 
 fn resolve_prefetch_env(grok_com_config: Option<GrokComConfig>) -> Option<PrefetchEnv> {
     let grok_home = crate::util::grok_home::grok_home();
-    let auth_manager = AuthManager::new(&grok_home, grok_com_config.unwrap_or_default());
-    let auth = auth_manager.current();
-    resolve_prefetch_env_with_auth(auth)
+    let _ = grok_com_config;
+    match crate::auth::load_api_key(&grok_home) {
+        Ok(Some(_)) => resolve_prefetch_env_with_auth(None),
+        Ok(None) => None,
+        Err(error) => {
+            tracing::warn!(error = %error, "OpenRouter credential store is unavailable");
+            None
+        }
+    }
 }
 
 /// Start model + settings prefetch on a background thread using pre-resolved auth.
@@ -1591,18 +1612,7 @@ fn spawn_prefetch_thread(env: PrefetchEnv) -> EarlyPrefetchHandle {
             env.auth.as_ref(),
             env.model_fetch_auth,
         );
-        if (env.endpoints.deployment_key.is_some() || crate::managed_config::has_active_team_auth())
-            && crate::config::is_managed_config_stale_for(
-                &crate::managed_config::current_serving_identity(),
-            )
-            && crate::managed_config::is_fetch_enabled()
-            && let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-        {
-            crate::managed_config::clear_orphan();
-            let _ = rt.block_on(crate::managed_config::sync());
-        }
+        // OpenRouter has no Grok managed-config service.
 
         EarlyPrefetchResult { models, settings }
     })
@@ -1682,16 +1692,32 @@ pub(crate) fn resolve_default_model(
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    let model_pref = config::resolve_string_flag(
-        cfg.default_model_override.as_deref(),
-        "GROK_DEFAULT_MODEL",
-        cfg.models.default.as_deref(),
-        cfg.remote_settings
-            .as_ref()
-            .and_then(|rs| rs.default_model.as_deref()),
-    );
+    let model_pref = cfg
+        .default_model_override
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(|value| config::Resolved::new(value.to_owned(), config::ConfigSource::Cli))
+        .or_else(|| {
+            cfg.models
+                .default
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .map(|value| config::Resolved::new(value.to_owned(), config::ConfigSource::Config))
+        });
 
     let first_or_fallback = || -> (String, ModelEntry) {
+        for auto_id in ["openrouter/auto", "openrouter/auto-beta"] {
+            if let Some((key, entry)) = visible.get_key_value(auto_id).or_else(|| {
+                visible
+                    .iter()
+                    .find(|(_, entry)| entry.info.model == auto_id)
+            }) {
+                return (key.clone(), entry.clone());
+            }
+        }
+        if let Some((key, entry)) = visible.iter().find(|(_, entry)| entry.info.agent_capable) {
+            return (key.clone(), entry.clone());
+        }
         if let Some((key, first)) = visible.first() {
             return (key.clone(), first.clone());
         }
@@ -2054,6 +2080,17 @@ mod tests {
         );
         // Lookup by the catalog KEY itself still works (exact-match path).
         assert!(mgr.model_show_model_fingerprint("enterprise-key"));
+    }
+
+    #[test]
+    fn current_model_supported_parameters_gate_optional_request_features() {
+        let mgr = test_manager();
+        let mut entry = make_model_entry("default");
+        entry.info.supported_parameters = vec!["structured_outputs".to_string()];
+        mgr.insert_test_entry("default", entry);
+
+        assert!(mgr.current_model_supports_parameter("structured_outputs"));
+        assert!(!mgr.current_model_supports_parameter("tools"));
     }
 
     /// The active model must be selectable, not the first entry of the
@@ -2866,6 +2903,7 @@ mod tests {
         let cache = test_cache_manager(tmp.path());
         let auth_method = mgr.inner.fetch_auth.read().cache_auth_method();
         let stale = ModelsCache {
+            schema_version: MODELS_CACHE_SCHEMA_VERSION,
             fetched_at: Utc::now() - ChronoDuration::seconds(3600),
             grok_version: Some(xai_grok_version::VERSION.to_string()),
             auth_method: Some(auth_method),
@@ -2942,6 +2980,7 @@ mod tests {
         let cache = test_cache_manager(tmp.path());
         let auth_method = mgr.inner.fetch_auth.read().cache_auth_method();
         let legacy = ModelsCache {
+            schema_version: 0,
             fetched_at: Utc::now(),
             grok_version: Some(xai_grok_version::VERSION.to_string()),
             auth_method: Some(auth_method),
@@ -3109,6 +3148,25 @@ mod tests {
             catalog.keys().next().unwrap(),
             "a CLI pref miss must not detour through pre_campaign_default"
         );
+    }
+
+    #[test]
+    fn openrouter_auto_is_default_and_recovers_stale_preferences() {
+        let catalog = make_prefetched(&[
+            "provider/chat-only",
+            "openrouter/auto",
+            "provider/agent-model",
+        ]);
+        let cfg = config::Config::default();
+        let (key, _, source) = resolve_default_model(&cfg, &catalog, true);
+        assert_eq!(key, "openrouter/auto");
+        assert_eq!(source, config::ConfigSource::Default);
+
+        let mut stale = config::Config::default();
+        stale.models.default = Some("removed/grok-model".to_string());
+        let (key, _, _) = resolve_default_model(&stale, &catalog, true);
+        assert_eq!(key, "openrouter/auto");
+        assert_eq!(stale.models.default.as_deref(), Some("removed/grok-model"));
     }
 
     // ── ModelFetchAuth::resolve priority tests ──────────────────────
@@ -3358,9 +3416,14 @@ mod tests {
         config::ModelEntryConfig {
             id: id.map(|s| s.to_owned()),
             model: model.to_owned(),
+            canonical_slug: None,
             base_url: "https://test.api/v1".to_owned(),
             name: name.map(|n| n.to_owned()),
             description: None,
+            agent_capable: true,
+            input_modalities: vec!["text".to_string()],
+            supported_parameters: vec!["tools".to_string()],
+            reasoning_mandatory: false,
             max_completion_tokens: None,
             temperature: None,
             top_p: None,

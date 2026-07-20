@@ -656,7 +656,8 @@ fn switch_model_complete_success_updates_model_and_pushes_message() {
         Some(model_id.clone())
     );
     // Success message pushed to scrollback.
-    assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 1);
+    assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 2);
+    assert!(last_system_text(&app, id).contains("Chat only"));
     // PersistPreferredModel effect emitted.
     assert_eq!(effects.len(), 1);
     assert!(matches!(

@@ -485,6 +485,7 @@ pub enum FinishReason {
     ToolCalls,
     ContentFilter,
     FunctionCall,
+    Error,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -492,7 +493,7 @@ pub struct ChatResponseMessage {
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "reasoning", skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCallResponse>,
@@ -546,6 +547,9 @@ pub struct Usage {
     /// normalize `0` to "unreported" (see `stream/chat_completions.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_in_usd_ticks: Option<i64>,
+    /// OpenRouter reports the request cost as numeric USD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -637,6 +641,7 @@ pub struct ChatChunkDelta {
     pub role: Option<Role>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(default, alias = "reasoning", skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
     /// Tool call deltas. Handles `null` in JSON as empty vec.
     #[serde(

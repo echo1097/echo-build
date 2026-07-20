@@ -605,6 +605,8 @@ pub enum Action {
     PermissionCancel,
     /// Log out: remove credentials and return to the login screen.
     Logout,
+    /// Show secure API-key management for the current OpenRouter login.
+    ShowAuthManagement,
     /// Log out and immediately start a new login flow.
     SwitchAccount,
     /// User pressed login on the welcome screen.
@@ -1520,7 +1522,7 @@ pub enum Effect {
         /// `SwitchModelComplete` so `IncompatibleAgent` can roll back.
         prev_model_id: Option<acp::ModelId>,
     },
-    /// Fetch changelog from CDN (both markdown + structured JSON).
+    /// load bundled release notes and welcome-screen entries.
     /// Runs off the render path via `spawn_blocking`. Result is cached
     /// on `AppView` so `/release-notes` and the welcome screen share it.
     FetchChangelog,
@@ -2298,7 +2300,7 @@ pub enum TaskResult {
         /// rollback on `IncompatibleAgent`.
         prev_model_id: Option<acp::ModelId>,
     },
-    /// Changelog fetched from CDN (both formats).
+    /// bundled release notes loaded in both display formats.
     ChangelogFetched {
         markdown: Option<String>,
         entries: Vec<xai_grok_shell::util::changelog::ChangelogEntry>,
@@ -2587,7 +2589,9 @@ pub enum TaskResult {
     /// Shell acknowledged logout (auth cleared).
     LogoutComplete,
     /// Logout failed, including secure credential deletion failures.
-    LogoutFailed { error: String },
+    LogoutFailed {
+        error: String,
+    },
     /// Best-effort `x.ai/auth/cancel` finished (no UI update; state already left Authenticating).
     AuthCancelComplete,
     /// Shell responded to `x.ai/auth/check_subscription`. `verify` echoes

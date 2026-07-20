@@ -29,8 +29,6 @@ pub(super) fn dispatch_show_plan(app: &mut AppView) -> Vec<Effect> {
 ///
 /// When not in plan mode: emits `SetSessionMode` (or `SetModeThenPrompt`
 /// if a description is provided). When already in plan mode: no-op with toast.
-/// Use `/view-plan` to open the current saved plan preview.
-///
 /// When a description is present, the mode switch and prompt send must be
 /// ordered: the mode switch ACP call must complete before the prompt is
 /// dispatched. `SetModeThenPrompt` bundles both into a single spawned task
@@ -48,7 +46,7 @@ pub(super) fn dispatch_enter_plan_mode(
 
     let in_plan = agent.plan_mode_pending.unwrap_or(agent.plan_mode_active);
     if in_plan {
-        app.show_toast("Already in plan mode. Use /view-plan to view the current plan.");
+        app.show_toast("Already in plan mode.");
         return vec![];
     }
 

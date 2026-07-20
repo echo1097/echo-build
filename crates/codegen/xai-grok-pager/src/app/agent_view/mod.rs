@@ -1586,6 +1586,11 @@ fn translate_local_submit(
         return InputOutcome::Changed;
     };
     match kind {
+        LocalQuestionKind::AuthManagement { configured } => match *idx {
+            0 => InputOutcome::Action(Action::Login),
+            1 if configured => InputOutcome::Action(Action::Logout),
+            _ => InputOutcome::Changed,
+        },
         LocalQuestionKind::Fork { directive } => {
             let Some((worktree, persist_mode)) = worktree_choice_from_index(*idx) else {
                 return InputOutcome::Changed;

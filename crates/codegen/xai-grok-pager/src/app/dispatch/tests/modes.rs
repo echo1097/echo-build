@@ -259,7 +259,7 @@ fn slash_plan_with_args_already_in_plan_is_noop() {
     );
 
     assert!(effects.is_empty(), "expected no effects, got: {effects:?}");
-    assert!(read_toast(&app).contains("/view-plan"));
+    assert_eq!(read_toast(&app), "Already in plan mode.");
 }
 
 /// Multi-agent fan-out (sibling for `plan_mode`).

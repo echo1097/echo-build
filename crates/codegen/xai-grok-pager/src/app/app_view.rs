@@ -28,9 +28,7 @@ use xai_acp_lib::AcpAgentTx;
 
 static OPENROUTER_SPLASH_ANNOUNCEMENT: LazyLock<xai_grok_announcements::RemoteAnnouncement> =
     LazyLock::new(|| xai_grok_announcements::RemoteAnnouncement {
-        message: Some(
-            "A fork of Grok Build by SpaceXAI for the OpenRouter ecosystem.".to_owned(),
-        ),
+        message: Some("A fork of Grok Build by SpaceXAI for the OpenRouter ecosystem.".to_owned()),
         ..Default::default()
     });
 
@@ -4000,7 +3998,11 @@ impl AppView {
                         } else {
                             self.tip.as_deref()
                         };
-                        let model_name_base = self.models.current_model_name().unwrap_or_default();
+                        let mut model_name_base =
+                            self.models.current_model_name().unwrap_or_default();
+                        if !self.models.current_model_agent_capable() {
+                            model_name_base.push_str(" · Chat only");
+                        }
                         let model_name = match self.models.reasoning_effort {
                             Some(eff) => format!("{model_name_base} ({eff})"),
                             None => model_name_base,
@@ -6587,7 +6589,7 @@ pub(crate) mod tests {
         assert!(app.usage_visible);
     }
     #[test]
-    fn apply_auth_meta_api_key_enables_voice_and_skips_tier_gate() {
+    fn apply_auth_meta_api_key_keeps_xai_voice_disabled_and_skips_tier_gate() {
         let mut app = test_app();
         advertise_media_tools(&mut app);
         assert!(!app.voice_mode_enabled);
@@ -6601,14 +6603,14 @@ pub(crate) mod tests {
         assert!(app.tier_restricted_commands.is_empty());
         assert_tier_restricted_commands_present(&app);
         assert!(!app.is_voice_tier_restricted());
-        assert!(app.voice_mode_enabled);
+        assert!(!app.voice_mode_enabled);
         let mut app = test_app();
         app.apply_auth_meta(&xai_grok_shell::auth::AuthMeta {
             subscription_tier: Some("api_key".into()),
             ..Default::default()
         });
         assert!(app.is_api_key_auth);
-        assert!(app.voice_mode_enabled);
+        assert!(!app.voice_mode_enabled);
         assert!(app.tier_restricted_commands.is_empty());
         app.apply_auth_meta(&xai_grok_shell::auth::AuthMeta {
             auth_mode: Some("Oidc".into()),

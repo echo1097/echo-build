@@ -1,22 +1,17 @@
-//! `/view-plan` -- open the current saved plan preview.
+//! `/auth` -- manage the current OpenRouter API key.
 
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 
-/// Open the current session plan preview.
-pub struct ViewPlanCommand;
+pub struct AuthCommand;
 
-impl SlashCommand for ViewPlanCommand {
+impl SlashCommand for AuthCommand {
     fn name(&self) -> &str {
-        "view-plan"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["show-plan", "plan-view"]
+        "auth"
     }
 
     fn description(&self) -> &str {
-        "View the current plan"
+        "Manage the current OpenRouter API key"
     }
 
     fn session_scoped(&self) -> bool {
@@ -24,10 +19,10 @@ impl SlashCommand for ViewPlanCommand {
     }
 
     fn usage(&self) -> &str {
-        "/view-plan"
+        "/auth"
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {
-        CommandResult::Action(Action::ShowPlan)
+        CommandResult::Action(Action::ShowAuthManagement)
     }
 }

@@ -485,12 +485,13 @@ fn plant_local_build_session(cwd: &std::path::Path, session_id: &str) -> std::pa
     std::fs::write(sess_dir.join("summary.json"), b"{}").expect("plant summary");
     sess_dir
 }
-/// Extract the in-flight auth request sequence, panicking if the auth
-/// state is not `Authenticating`.
+/// Extract the in-flight auth request sequence from the legacy login state or
+/// the OpenRouter Keychain entry state.
 fn authenticating_seq(app: &AppView) -> u64 {
     match app.auth_state {
         AuthState::Authenticating { request_seq, .. } => request_seq,
-        ref other => panic!("expected Authenticating, got {other:?}"),
+        AuthState::ApiKeyEntry { request_seq, .. } => request_seq,
+        ref other => panic!("expected an authentication state, got {other:?}"),
     }
 }
 /// Extract text from the last system message in an agent's scrollback.

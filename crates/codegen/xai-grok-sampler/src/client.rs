@@ -34,7 +34,6 @@ use crate::config::{AuthScheme, OriginClientInfo, SamplerConfig};
 pub use xai_grok_sampling_types::ApiBackend;
 
 /// Process-level fallback for the `x-grok-client-identifier` header.
-const DEFAULT_CLIENT_IDENTIFIER: &str = "grok-shell";
 
 /// Product identifier baked into User-Agent strings.
 const AGENT_PRODUCT: &str = "grok-shell";
@@ -119,7 +118,6 @@ fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
             }
             tracing::error!(
                 error = %first_err,
-                raw_data = %data,
                 "Failed to deserialize ResponseStreamEvent from stream"
             );
             return Err(SamplingError::Serialization(first_err));
@@ -253,8 +251,7 @@ fn extract_model_metadata(headers: &reqwest::header::HeaderMap) -> Option<Respon
     }
 }
 
-/// Wrapper for streaming chat completion requests that adds `stream` and
-/// `stream_options` fields without modifying the original `ChatCompletionRequest`.
+/// Wrapper for streaming chat completion requests that adds `stream`.
 ///
 /// Uses `#[serde(flatten)]` to inline all fields from the inner request,
 /// allowing single-pass serialization instead of the previous two-pass
@@ -264,12 +261,6 @@ struct StreamingChatRequest<'a> {
     #[serde(flatten)]
     inner: &'a ChatCompletionRequest,
     stream: bool,
-    stream_options: StreamOptions,
-}
-
-#[derive(Serialize)]
-struct StreamOptions {
-    include_usage: bool,
 }
 
 /// HTTP client for sampling. Cheap to clone; carries an `Arc`-backed
@@ -309,6 +300,7 @@ impl std::fmt::Debug for SamplingClient {
 #[derive(Clone, Debug, Default)]
 struct ClientDefaults {
     model: String,
+    context_window: u64,
     max_completion_tokens: Option<u32>,
     temperature: Option<f32>,
     top_p: Option<f32>,
@@ -399,16 +391,20 @@ impl SamplingClient {
     /// pre-computes the default request headers. This does not perform
     /// any network I/O.
     pub fn new(config: SamplerConfig) -> Result<Self> {
+        if !openrouter_endpoint_allowed(&config.base_url) {
+            return Err(SamplingError::InvalidConfiguration(
+                "OpenRouter credentials may only be sent to OpenRouter or a loopback test server",
+            ));
+        }
+
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         if let Some(ref api_key) = config.api_key {
             match config.auth_scheme {
                 AuthScheme::XApiKey => {
                     let header_value = HeaderValue::from_str(api_key).map_err(|_| {
-                        tracing::debug!(
-                            api_key = %api_key,
-                            "Invalid api_key: cannot be converted to a valid HTTP header"
-                        );
+                        tracing::debug!("API key cannot be converted to a valid HTTP header");
                         SamplingError::Auth(
                             "Invalid api_key: cannot be converted to a valid HTTP header"
                                 .to_string(),
@@ -419,10 +415,7 @@ impl SamplingClient {
                 AuthScheme::Bearer => {
                     let bearer = format!("Bearer {}", api_key);
                     let header_value = HeaderValue::from_str(&bearer).map_err(|_| {
-                        tracing::debug!(
-                            api_key = %api_key,
-                            "Invalid api_key: cannot be converted to a valid HTTP Authorization header"
-                        );
+                        tracing::debug!("API key cannot be converted to a valid Authorization header");
                         SamplingError::Auth(
                             "Invalid api_key: cannot be converted to a valid HTTP Authorization header"
                                 .to_string(),
@@ -433,54 +426,7 @@ impl SamplingClient {
             }
         }
 
-        // Apply all extra headers verbatim. This is the single
-        // injection point for proxy-auth headers and any other URL- or
-        // environment-specific headers the session decides to set.
-        for (key, value) in &config.extra_headers {
-            let header_name = HeaderName::try_from(key.as_str())
-                .map_err(|_| SamplingError::InvalidConfiguration("Invalid extra header name"))?;
-            let header_value = HeaderValue::from_str(value)
-                .map_err(|_| SamplingError::InvalidConfiguration("Invalid extra header value"))?;
-            headers.insert(header_name, header_value);
-        }
-
-        // Add x-grok-client-version header for version gating at the proxy.
-        if let Some(client_version) = config.client_version.as_ref()
-            && let Ok(header_value) = HeaderValue::from_str(client_version)
-        {
-            headers.insert(
-                HeaderName::from_static("x-grok-client-version"),
-                header_value,
-            );
-        }
-
-        if let Some(deployment_id) = config.deployment_id.as_ref()
-            && let Ok(header_value) = HeaderValue::from_str(deployment_id)
-        {
-            headers.insert(
-                HeaderName::from_static("x-grok-deployment-id"),
-                header_value,
-            );
-        }
-
-        if let Some(user_id) = config.user_id.as_ref()
-            && let Ok(header_value) = HeaderValue::from_str(user_id)
-        {
-            headers.insert(HeaderName::from_static("x-grok-user-id"), header_value);
-        }
-
-        {
-            let client_id = config
-                .client_identifier
-                .clone()
-                .unwrap_or_else(|| DEFAULT_CLIENT_IDENTIFIER.to_string());
-            if let Ok(header_value) = HeaderValue::from_str(&client_id) {
-                headers.insert(
-                    HeaderName::from_static("x-grok-client-identifier"),
-                    header_value,
-                );
-            }
-        }
+        // OpenRouter uses standard authorization and content headers only.
 
         // Always set User-Agent: per-session origin if available, else fallback.
         {
@@ -521,6 +467,7 @@ impl SamplingClient {
 
         let defaults = ClientDefaults {
             model: config.model,
+            context_window: config.context_window,
             max_completion_tokens: config.max_completion_tokens,
             temperature: config.temperature,
             top_p: config.top_p,
@@ -567,29 +514,13 @@ impl SamplingClient {
                 }
             }
         }
-        {
-            let auth_prefix = headers
-                .get(AUTHORIZATION)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.chars().take(20).collect::<String>());
-            let x_api_key_prefix = headers
-                .get(HeaderName::from_static("x-api-key"))
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.chars().take(12).collect::<String>());
-            tracing::info!(
-                target: crate::sampling_log::TARGET,
-                event = "client_post",
-                base_url = %self.base_url,
-                model = %self.defaults.model,
-                api_backend = ?self.defaults.api_backend,
-                auth_scheme = ?self.defaults.auth_scheme,
-                has_bearer_resolver = self.bearer_resolver.is_some(),
-                has_authorization_header = headers.get(AUTHORIZATION).is_some(),
-                has_x_api_key_header = headers.get(HeaderName::from_static("x-api-key")).is_some(),
-                auth_header_prefix = auth_prefix.as_deref().unwrap_or("none"),
-                x_api_key_prefix = x_api_key_prefix.as_deref().unwrap_or("none"),
-            );
-        }
+        tracing::info!(
+            target: crate::sampling_log::TARGET,
+            event = "client_post",
+            base_url = %self.base_url,
+            model = %self.defaults.model,
+            has_authorization_header = headers.get(AUTHORIZATION).is_some(),
+        );
         if let Some(injector) = &self.header_injector {
             injector.inject(&mut headers);
         }
@@ -598,42 +529,12 @@ impl SamplingClient {
 
     /// Bearer prefix for 401 attribution. Prefers live resolver, falls back to default_headers.
     fn current_sent_bearer_prefix(&self) -> Option<String> {
-        self.bearer_resolver
-            .as_ref()
-            .and_then(|r| r.current_bearer())
-            .or_else(|| self.extract_sent_bearer())
-            .map(|mut s| {
-                s.truncate(crate::attribution::SENT_BEARER_PREFIX_LEN.min(s.len()));
-                s
-            })
+        None
     }
 
-    /// Extract the bearer from `default_headers`, truncated to prefix length.
-    /// Reads `x-api-key` (Anthropic Messages API) or `Authorization` (OpenAI-completions).
+    #[cfg(test)]
     fn extract_sent_bearer(&self) -> Option<String> {
-        let raw = match self.defaults.auth_scheme {
-            AuthScheme::XApiKey => self
-                .default_headers
-                .get(HeaderName::from_static("x-api-key"))
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string()),
-            AuthScheme::Bearer => self
-                .default_headers
-                .get(AUTHORIZATION)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.strip_prefix("Bearer "))
-                .map(|s| s.to_string()),
-        };
-        raw.map(|mut s| {
-            // Truncate in-place so we never materialize a heap-resident
-            // copy of the full bearer outside the local stack of this
-            // function. `String::truncate` operates on byte indices and
-            // panics on a non-char-boundary cut; bearer tokens are
-            // ASCII (per the `Authorization` and `x-api-key` header
-            // grammars) so the byte index is always safe.
-            s.truncate(crate::attribution::SENT_BEARER_PREFIX_LEN.min(s.len()));
-            s
-        })
+        None
     }
 
     /// Invoke the optional 401 attribution callback for one logical
@@ -678,11 +579,6 @@ impl SamplingClient {
             || lower.contains("secret")
     }
 
-    /// Short lossy body snippet for error logs (never user-facing).
-    fn body_preview(bytes: &[u8]) -> String {
-        String::from_utf8_lossy(bytes).chars().take(500).collect()
-    }
-
     /// Log all headers from a request at debug level (redacting sensitive values).
     fn log_request_headers(request: &reqwest::Request, endpoint_name: &str) {
         for (name, value) in request.headers().iter() {
@@ -704,6 +600,17 @@ impl SamplingClient {
         let base = self.base_url.trim_end_matches('/');
         let path = path.trim_start_matches('/');
         format!("{base}/{path}")
+    }
+
+    fn decorate_provider_message(&self, message: String) -> String {
+        if xai_grok_sampling_types::is_context_length_error(&message) {
+            format!(
+                "{message} Model {} has a {}-token context window.",
+                self.defaults.model, self.defaults.context_window
+            )
+        } else {
+            message
+        }
     }
 
     fn apply_defaults(&self, mut request: ChatCompletionRequest) -> Result<ChatCompletionRequest> {
@@ -741,7 +648,8 @@ impl SamplingClient {
                     "Unauthorized (401): {server_message}"
                 )));
             }
-            let message = user_facing_api_error_message(status, bytes.as_ref());
+            let message = self
+                .decorate_provider_message(user_facing_api_error_message(status, bytes.as_ref()));
             return Err(SamplingError::Api {
                 status,
                 message,
@@ -752,12 +660,7 @@ impl SamplingClient {
         }
 
         let completion = serde_json::from_slice::<ChatCompletionResponse>(&bytes).map_err(|e| {
-            let raw_body = String::from_utf8_lossy(&bytes);
-            tracing::error!(
-                error = %e,
-                raw_body = %raw_body,
-                "Failed to deserialize ChatCompletionResponse"
-            );
+            tracing::error!(error = %e, "Failed to deserialize ChatCompletionResponse");
             SamplingError::Serialization(e)
         })?;
         Ok(completion)
@@ -772,8 +675,6 @@ impl SamplingClient {
         request: ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse> {
         let payload = self.apply_defaults(request)?;
-        let x_grok_conv_id = &payload.x_grok_conv_id.clone().unwrap_or_default();
-        let x_grok_req_id = &payload.x_grok_req_id.clone().unwrap_or_default();
         let model_id = payload.model.clone().unwrap_or_default();
 
         tracing::debug!(
@@ -782,19 +683,7 @@ impl SamplingClient {
             "Sending chat completion request"
         );
 
-        let grok_headers = GrokRequestHeaders {
-            conv_id: x_grok_conv_id,
-            req_id: x_grok_req_id,
-            model_id: &model_id,
-            session_id: payload.x_grok_session_id.as_deref().unwrap_or_default(),
-            turn_idx: payload.x_grok_turn_idx.as_deref(),
-            agent_id: payload.x_grok_agent_id.as_deref().unwrap_or_default(),
-            deployment_id: payload.x_grok_deployment_id.as_deref(),
-            user_id: payload.x_grok_user_id.as_deref(),
-        };
-        let http_request = grok_headers
-            .apply(self.post(self.endpoint("chat/completions")))
-            .json(&payload);
+        let http_request = self.post(self.endpoint("chat/completions")).json(&payload);
 
         let response = http_request.send().await.map_err(|e| {
             // Log at debug level; errors are surfaced to the caller.
@@ -825,8 +714,6 @@ impl SamplingClient {
         Option<ResponseModelMetadata>,
     )> {
         let payload = self.apply_defaults(request)?;
-        let x_grok_conv_id = &payload.x_grok_conv_id.clone().unwrap_or_default();
-        let x_grok_req_id = &payload.x_grok_req_id.clone().unwrap_or_default();
         let model_id = payload.model.clone().unwrap_or_default();
 
         // Wrap the request with streaming fields and serialize once.
@@ -835,23 +722,10 @@ impl SamplingClient {
         let streaming_request = StreamingChatRequest {
             inner: &payload,
             stream: true,
-            stream_options: StreamOptions {
-                include_usage: true,
-            },
         };
 
-        let grok_headers = GrokRequestHeaders {
-            conv_id: x_grok_conv_id,
-            req_id: x_grok_req_id,
-            model_id: &model_id,
-            session_id: payload.x_grok_session_id.as_deref().unwrap_or_default(),
-            turn_idx: payload.x_grok_turn_idx.as_deref(),
-            agent_id: payload.x_grok_agent_id.as_deref().unwrap_or_default(),
-            deployment_id: payload.x_grok_deployment_id.as_deref(),
-            user_id: payload.x_grok_user_id.as_deref(),
-        };
-        let http_request = grok_headers
-            .apply(self.post(self.endpoint("chat/completions")))
+        let http_request = self
+            .post(self.endpoint("chat/completions"))
             .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
             .json(&streaming_request);
 
@@ -895,12 +769,11 @@ impl SamplingClient {
             }
 
             let bytes = response.bytes().await?;
-            let message = user_facing_api_error_message(status, bytes.as_ref());
-            span.record("error", message.as_str());
+            let message = self
+                .decorate_provider_message(user_facing_api_error_message(status, bytes.as_ref()));
+            span.record("error", "OpenRouter request failed");
             tracing::error!(
                 status = %status,
-                error_message = %message,
-                body_preview = %Self::body_preview(bytes.as_ref()),
                 model_id = %model_id,
                 "chat/completions API error"
             );
@@ -948,23 +821,12 @@ impl SamplingClient {
                             return std::future::ready(None);
                         }
 
-                        tracing::info!(
-                            target: crate::sampling_log::TARGET,
-                            event = "sse_chunk",
-                            backend = "chat_completions",
-                            data = %data,
-                        );
-
                         if let Some(stream_error) = try_parse_stream_error(data) {
                             Some(Err(stream_error))
                         } else {
                             Some(
                                 serde_json::from_str::<ChatCompletionChunk>(data).map_err(|e| {
-                                    tracing::error!(
-                                        error = %e,
-                                        raw_data = %data,
-                                        "Failed to deserialize ChatCompletionChunk from stream"
-                                    );
+                                    tracing::error!(error = %e, "Failed to deserialize ChatCompletionChunk from stream");
                                     SamplingError::Serialization(e)
                                 }),
                             )
@@ -1091,8 +953,6 @@ impl SamplingClient {
             let message = user_facing_api_error_message(status, bytes.as_ref());
             tracing::warn!(
                 status = %status,
-                error_message = %message,
-                body_preview = %Self::body_preview(bytes.as_ref()),
                 model_id = %model_id,
                 "responses API error"
             );
@@ -1106,10 +966,8 @@ impl SamplingClient {
         }
 
         let response_obj = serde_json::from_slice::<rs::Response>(&bytes).map_err(|e| {
-            let raw_body = String::from_utf8_lossy(&bytes);
             tracing::error!(
                 error = %e,
-                raw_body = %raw_body,
                 "Failed to deserialize rs::Response"
             );
             SamplingError::Serialization(e)
@@ -1252,11 +1110,9 @@ impl SamplingClient {
             let should_retry = extract_should_retry(response.headers());
             let bytes = response.bytes().await?;
             let message = user_facing_api_error_message(status, bytes.as_ref());
-            span.record("error", message.as_str());
+            span.record("error", "OpenRouter request failed");
             tracing::error!(
                 status = %status,
-                error_message = %message,
-                body_preview = %Self::body_preview(bytes.as_ref()),
                 model_id = %model_id,
                 "responses API error"
             );
@@ -1305,13 +1161,6 @@ impl SamplingClient {
                         if data == "[DONE]" {
                             return std::future::ready(None);
                         }
-
-                        tracing::info!(
-                            target: crate::sampling_log::TARGET,
-                            event = "sse_chunk",
-                            backend = "responses",
-                            data = %data,
-                        );
 
                         // Intercept the non-standard doom-loop event before
                         // typed deserialization; async-openai's event enum
@@ -1430,8 +1279,6 @@ impl SamplingClient {
             let message = user_facing_api_error_message(status, bytes.as_ref());
             tracing::warn!(
                 status = %status,
-                error_message = %message,
-                body_preview = %Self::body_preview(bytes.as_ref()),
                 model_id = %model_id,
                 "messages API error"
             );
@@ -1446,10 +1293,8 @@ impl SamplingClient {
 
         let response_obj =
             serde_json::from_slice::<messages::MessagesResponse>(&bytes).map_err(|e| {
-                let raw_body = String::from_utf8_lossy(&bytes);
                 tracing::error!(
                     error = %e,
-                    raw_body = %raw_body,
                     "Failed to deserialize MessagesResponse"
                 );
                 SamplingError::Serialization(e)
@@ -1552,11 +1397,9 @@ impl SamplingClient {
             let should_retry = extract_should_retry(response.headers());
             let bytes = response.bytes().await?;
             let message = user_facing_api_error_message(status, bytes.as_ref());
-            span.record("error", message.as_str());
+            span.record("error", "OpenRouter request failed");
             tracing::error!(
                 status = %status,
-                error_message = %message,
-                body_preview = %Self::body_preview(bytes.as_ref()),
                 model_id = %model_id,
                 "messages API error"
             );
@@ -1604,13 +1447,6 @@ impl SamplingClient {
                             return std::future::ready(None);
                         }
 
-                        tracing::info!(
-                            target: crate::sampling_log::TARGET,
-                            event = "sse_chunk",
-                            backend = "messages",
-                            data = %data,
-                        );
-
                         if let Some(stream_error) = try_parse_stream_error(data) {
                             Some(Err(stream_error))
                         } else {
@@ -1619,7 +1455,6 @@ impl SamplingClient {
                                     |e| {
                                         tracing::error!(
                                             error = %e,
-                                            raw_data = %data,
                                             "Failed to deserialize MessageStreamEvent from stream"
                                         );
                                         SamplingError::Serialization(e)
@@ -1890,6 +1725,30 @@ impl SamplingClient {
     }
 }
 
+fn openrouter_endpoint_allowed(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    if host == "openrouter.ai" || host == "localhost" {
+        return true;
+    }
+    if host
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|address| address.is_loopback())
+    {
+        return true;
+    }
+    #[cfg(test)]
+    if host.ends_with(".test") {
+        return true;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1960,21 +1819,13 @@ mod tests {
         let wrapper = StreamingChatRequest {
             inner: &request,
             stream: true,
-            stream_options: StreamOptions {
-                include_usage: true,
-            },
         };
 
         let json: serde_json::Value = serde_json::to_value(&wrapper).unwrap();
         let obj = json.as_object().unwrap();
 
         assert_eq!(obj.get("stream").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(
-            obj.get("stream_options")
-                .and_then(|v| v.get("include_usage"))
-                .and_then(|v| v.as_bool()),
-            Some(true)
-        );
+        assert!(obj.get("stream_options").is_none());
 
         assert!(
             obj.get("inner").is_none(),
@@ -2070,13 +1921,37 @@ mod tests {
     }
 
     #[test]
-    fn new_applies_extra_headers() {
+    fn new_ignores_legacy_extra_headers() {
         let mut cfg = minimal_config();
         cfg.extra_headers
             .insert("x-test-header".to_string(), "test-value".to_string());
         cfg.extra_headers
             .insert("x-XAI-token-auth".to_string(), "xai-grok-cli".to_string());
-        let _client = SamplingClient::new(cfg).expect("client with extra headers should construct");
+        let client = SamplingClient::new(cfg).expect("client with extra headers should construct");
+        assert!(client.default_headers.get("x-test-header").is_none());
+        assert!(client.default_headers.get("x-XAI-token-auth").is_none());
+    }
+
+    #[test]
+    fn new_rejects_legacy_provider_hosts_before_request_construction() {
+        for base_url in ["https://api.x.ai/v1", "https://code.grok.com/v1"] {
+            let cfg = SamplerConfig {
+                base_url: base_url.to_string(),
+                ..minimal_config()
+            };
+            let error = SamplingClient::new(cfg).expect_err("legacy host must be rejected");
+            assert!(matches!(error, SamplingError::InvalidConfiguration(_)));
+        }
+    }
+
+    #[test]
+    fn context_errors_include_model_slug_and_catalog_window() {
+        let client = SamplingClient::new(minimal_config()).expect("client should build");
+        let message = client.decorate_provider_message(
+            "maximum context length exceeded for this request".to_string(),
+        );
+        assert!(message.contains("test-model"));
+        assert!(message.contains("8192-token context window"));
     }
 
     #[test]
@@ -2225,11 +2100,7 @@ mod tests {
         let bearer = client.extract_sent_bearer();
         // Bearer is truncated at the crate boundary -- callers
         // downstream of this method only ever see the prefix.
-        assert_eq!(bearer.as_deref(), Some("test-bearer-"));
-        assert_eq!(
-            bearer.as_deref().map(str::len),
-            Some(crate::attribution::SENT_BEARER_PREFIX_LEN),
-        );
+        assert!(bearer.is_none());
     }
 
     /// `extract_sent_bearer` reads `x-api-key` for Anthropic Messages API
@@ -2244,11 +2115,7 @@ mod tests {
         };
         let client = SamplingClient::new(cfg).expect("client should build");
         let bearer = client.extract_sent_bearer();
-        assert_eq!(bearer.as_deref(), Some("anthropic-ke"));
-        assert_eq!(
-            bearer.as_deref().map(str::len),
-            Some(crate::attribution::SENT_BEARER_PREFIX_LEN),
-        );
+        assert!(bearer.is_none());
     }
 
     /// `extract_sent_bearer` returns `None` when no auth header is set.
@@ -2352,7 +2219,7 @@ mod tests {
             ..minimal_config()
         };
         let client = SamplingClient::new(cfg).expect("client should build");
-        assert_eq!(client.extract_sent_bearer().as_deref(), Some("abc"));
+        assert!(client.extract_sent_bearer().is_none());
     }
 
     /// `record_401_attribution` invokes the wired callback with the
@@ -2379,12 +2246,9 @@ mod tests {
             calls[0].0,
             crate::attribution::SamplingConsumer::ChatCompletionsStream
         );
-        // Prefix-only -- the `extra-tail` portion of the bearer is
-        // dropped by `extract_sent_bearer` before the callback fires.
-        assert_eq!(calls[0].1.as_deref(), Some("the-bearer-1"));
-        assert_eq!(
-            calls[0].1.as_deref().map(str::len),
-            Some(crate::attribution::SENT_BEARER_PREFIX_LEN),
+        assert!(
+            calls[0].1.is_none(),
+            "credentials must never cross into attribution"
         );
     }
 

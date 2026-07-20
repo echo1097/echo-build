@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use futures_util::stream::{BoxStream, Stream};
 
 use xai_grok_sampling_types::{
-    AssistantItem, ChatCompletionChunk, ConversationItem, ConversationResponse,
+    AssistantItem, ChatCompletionChunk, ConversationItem, ConversationResponse, FinishReason,
     ResponseModelMetadata, SamplingError, StopReason, TokenUsage, ToolCall,
 };
 
@@ -131,7 +131,8 @@ pub fn stream_chat_completions<'a>(
             if let Some(u) = chunk.usage.clone() {
                 // Wire cost is cumulative for the response, so last-write-wins.
                 // Never clobber a known cost with missing/unreported.
-                let chunk_cost = xai_grok_sampling_types::reported_cost_ticks(u.cost_in_usd_ticks);
+                let chunk_cost = xai_grok_sampling_types::reported_cost_ticks(u.cost_in_usd_ticks)
+                    .or_else(|| u.cost.map(|cost| (cost * 10_000_000_000.0).round() as i64));
                 cost_usd_ticks = match (cost_usd_ticks, chunk_cost) {
                     (_, Some(n)) => Some(n),
                     (prev, None) => prev,
@@ -146,6 +147,18 @@ pub fn stream_chat_completions<'a>(
             for choice in chunk.choices.into_iter() {
                 first_choice_seen = true;
                 if let Some(fr) = choice.finish_reason {
+                    if fr == FinishReason::Error {
+                        let error = SamplingError::StreamError {
+                            error_type: "provider_error".to_string(),
+                            message: "OpenRouter provider ended the stream with an error"
+                                .to_string(),
+                        };
+                        yield SamplingEvent::Failed {
+                            request_id: request_id.clone(),
+                            error: SamplingErrorInfo::from(&error),
+                        };
+                        return;
+                    }
                     finish_reason = Some(fr.into());
                     chunk_has_content = true;
                 }
@@ -607,6 +620,33 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn finish_reason_error_preserves_tokens_and_terminates_as_failed() {
+        let raw = stream::iter(vec![
+            Ok(text_chunk("partial")),
+            Ok(final_chunk(FinishReason::Error)),
+        ])
+        .boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SamplingEvent::ChannelToken { text, .. } if text == "partial"
+        )));
+        assert!(matches!(events.last(), Some(SamplingEvent::Failed { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SamplingEvent::Completed { .. }))
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn idle_timeout_when_stream_stalls() {
         // A stream that yields one chunk then hangs forever.
@@ -667,6 +707,7 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             cost_in_usd_ticks: None,
+            cost: None,
         });
 
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
@@ -707,6 +748,7 @@ mod tests {
                 prompt_tokens_details: None,
                 completion_tokens_details: None,
                 cost_in_usd_ticks: wire,
+                cost: None,
             });
             let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
                 Ok(text_chunk("ok")),
@@ -731,6 +773,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openrouter_numeric_cost_is_converted_to_usd_ticks() {
+        let mut chunk = make_chunk(vec![ChatChunkDelta::default()]);
+        chunk.usage = Some(Usage {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            cost_in_usd_ticks: None,
+            cost: Some(0.000_001_234_5),
+        });
+        let raw = stream::iter(vec![Ok(chunk), Ok(final_chunk(FinishReason::Stop))]).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                assert_eq!(response.cost_usd_ticks, Some(12_345));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn later_missing_cost_does_not_clobber_earlier_ticks() {
         let mut first = make_chunk(vec![ChatChunkDelta::default()]);
         first.usage = Some(Usage {
@@ -740,6 +811,7 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             cost_in_usd_ticks: Some(99),
+            cost: None,
         });
         let mut second = make_chunk(vec![ChatChunkDelta::default()]);
         second.usage = Some(Usage {
@@ -749,6 +821,7 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             cost_in_usd_ticks: Some(0),
+            cost: None,
         });
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
             Ok(text_chunk("ok")),

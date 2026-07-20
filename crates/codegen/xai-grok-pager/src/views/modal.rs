@@ -434,9 +434,9 @@ pub fn default_palette_entries(sharing_enabled: bool) -> Vec<PaletteEntry> {
             command: PaletteCommand::SlashCommand("/context".into()),
         },
         PaletteEntry {
-            label: "View Plan".into(),
-            shortcut: "/view-plan".into(),
-            command: PaletteCommand::SlashCommand("/view-plan".into()),
+            label: "Manage API Key".into(),
+            shortcut: "/auth".into(),
+            command: PaletteCommand::SlashCommand("/auth".into()),
         },
         PaletteEntry {
             label: "Memory".into(),

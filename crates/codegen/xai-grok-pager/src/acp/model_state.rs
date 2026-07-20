@@ -80,6 +80,37 @@ impl ModelState {
         Some(self.current.as_ref()?.0.as_ref())
     }
 
+    pub fn current_model_slug(&self) -> Option<String> {
+        let current = self.current.as_ref()?;
+        self.available
+            .get(current)
+            .and_then(|info| info.meta.as_ref())
+            .and_then(|meta| meta.get("modelSlug"))
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+            .or_else(|| Some(current.0.to_string()))
+    }
+
+    pub fn current_model_agent_capable(&self) -> bool {
+        self.current
+            .as_ref()
+            .and_then(|id| self.available.get(id))
+            .and_then(|info| info.meta.as_ref())
+            .and_then(|meta| meta.get("agentCapable"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    }
+
+    pub fn current_model_detailed_label(&self) -> Option<String> {
+        let name = self.current_model_name()?;
+        let slug = self.current_model_slug()?;
+        if name == slug {
+            Some(name)
+        } else {
+            Some(format!("{name}\n{slug}"))
+        }
+    }
+
     /// Total context window tokens for the current model (if available).
     fn current_context_window_tokens(&self) -> Option<u64> {
         let meta = self.available.get(self.current.as_ref()?)?.meta.as_ref()?;
@@ -94,11 +125,7 @@ impl ModelState {
     /// `meta` (the ACP extension point — same source as `totalContextTokens`).
     ///
     /// Honors an explicit `acceptsImages` bool, else an `inputModalities` array
-    /// containing `"image"`. DEFAULTS TO `true` when neither key is present:
-    /// correct today (all current Grok models accept images, so nothing is
-    /// suppressed) and forward-compatible (suppresses non-vision models once the
-    /// ACP server populates the key). Populating that key server-side is a
-    /// separate change.
+    /// containing `"image"`. Missing metadata is treated as unsupported.
     pub fn current_model_accepts_images(&self) -> bool {
         let Some(meta) = self
             .current
@@ -106,7 +133,7 @@ impl ModelState {
             .and_then(|id| self.available.get(id))
             .and_then(|info| info.meta.as_ref())
         else {
-            return true;
+            return false;
         };
         if let Some(accepts) = meta.get("acceptsImages").and_then(|v| v.as_bool()) {
             return accepts;
@@ -116,7 +143,7 @@ impl ModelState {
                 .iter()
                 .any(|m| m.as_str().is_some_and(|s| s.eq_ignore_ascii_case("image")));
         }
-        true
+        false
     }
 
     /// Get the effective context window size (tokens).
@@ -156,6 +183,7 @@ impl ModelState {
         // not this session's choice; only re-derive when the model changed so a
         // catalog refresh can't clobber a user-set effort.
         if self.current != previous_current_model {
+            self.context_window_override = None;
             self.reasoning_effort = self
                 .current
                 .as_ref()
@@ -170,6 +198,9 @@ impl ModelState {
         model_id: acp::ModelId,
         effort_override: Option<ReasoningEffort>,
     ) {
+        if self.current.as_ref() != Some(&model_id) {
+            self.context_window_override = None;
+        }
         self.current = Some(model_id.clone());
         self.reasoning_effort = effort_override.or_else(|| {
             self.available
@@ -452,15 +483,40 @@ mod tests {
     }
 
     #[test]
-    fn accepts_images_defaults_true_when_meta_absent() {
-        // No current model, empty meta, and a meta without the key all default
-        // permissive — correct today and a no-op until the server populates it.
-        assert!(ModelState::default().current_model_accepts_images());
-        assert!(state_with_meta(None).current_model_accepts_images());
-        assert!(
-            state_with_meta(Some(serde_json::json!({ "totalContextTokens": 256000 })))
-                .current_model_accepts_images()
-        );
+    fn capabilities_default_to_unsupported_when_meta_is_absent() {
+        assert!(!ModelState::default().current_model_accepts_images());
+        assert!(!state_with_meta(None).current_model_accepts_images());
+        let state = state_with_meta(Some(serde_json::json!({ "totalContextTokens": 256000 })));
+        assert!(!state.current_model_accepts_images());
+        assert!(!state.current_model_agent_capable());
+    }
+
+    #[test]
+    fn model_switch_resets_context_override_and_capabilities() {
+        let mut state = sample_models();
+        let first = state.current.clone().unwrap();
+        let second = acp::ModelId::new(Arc::from("model-b"));
+        state.available.get_mut(&first).unwrap().meta = serde_json::json!({
+            "totalContextTokens": 8_000,
+            "agentCapable": true,
+            "inputModalities": ["text", "image"],
+        })
+        .as_object()
+        .cloned();
+        state.available.get_mut(&second).unwrap().meta = serde_json::json!({
+            "totalContextTokens": 1_000_000,
+            "agentCapable": false,
+            "inputModalities": ["text"],
+        })
+        .as_object()
+        .cloned();
+
+        state.override_context_window(128_000);
+        state.set_current(second, None);
+
+        assert_eq!(state.get_context_window(), Some(1_000_000));
+        assert!(!state.current_model_agent_capable());
+        assert!(!state.current_model_accepts_images());
     }
 
     #[test]

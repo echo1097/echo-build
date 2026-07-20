@@ -349,6 +349,31 @@
     }
 
     #[test]
+    fn apply_retry_state_openrouter_402_does_not_open_grok_billing() {
+        let mut session = make_session(Some("s1"));
+        let mut scrollback = ScrollbackState::new();
+        session.in_flight_prompt = Some(InFlightPrompt {
+            text: "send through openrouter".into(),
+            images: Vec::new(),
+            scrollback_entry: EntryId::new(6),
+            chip_elements: Vec::new(),
+        });
+
+        apply_retry_state(
+            &RetryState::Failed {
+                error_type: "proxy_error".into(),
+                message: "API error (status 402 Payment Required): insufficient credits".into(),
+            },
+            &mut session,
+            &mut scrollback,
+            true,
+        );
+
+        assert!(!session.credit_limit_blocked);
+        assert!(session.in_flight_prompt.is_none());
+    }
+
+    #[test]
     fn apply_retry_state_non_credit_limit_failed_clears_in_flight_prompt() {
         let mut session = make_session(Some("s1"));
         let mut scrollback = ScrollbackState::new();
@@ -843,4 +868,3 @@
             "non-encrypted_content error types must not set model_incompatible"
         );
     }
-

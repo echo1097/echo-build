@@ -1684,12 +1684,12 @@ fn dashboard_slash_model_stages_pending_model() {
 }
 
 /// A tier-restricted command typed into the dashboard dispatch input must
-/// upsell via the feedback toast — not execute, and (crucially) not fall
+/// report that it is unavailable — not execute, and (crucially) not fall
 /// through the unknown-command path, which would spawn a session whose
 /// first prompt is the raw slash text.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
-fn dashboard_slash_restricted_command_upsells_via_toast() {
+fn dashboard_slash_restricted_command_reports_unavailable_without_upsell() {
     let mut app = test_app();
     app.tier_restricted_commands = vec!["imagine".to_string()];
     open_dashboard(&mut app);
@@ -1707,10 +1707,10 @@ fn dashboard_slash_restricted_command_upsells_via_toast() {
         .unwrap()
         .error_toast
         .as_deref()
-        .expect("restricted command must set the upsell toast");
+        .expect("restricted command must set an unavailable toast");
     assert!(
-        toast.contains("/imagine") && toast.contains("SuperGrok"),
-        "toast must carry the upsell: {toast}"
+        toast.contains("/imagine") && toast.contains("not available") && !toast.contains("Grok"),
+        "toast must not carry a Grok upsell: {toast}"
     );
 }
 

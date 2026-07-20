@@ -78,6 +78,7 @@ pub(crate) fn handle_ask_user_question(
         if let Some(ref kind) = old_qv.local_kind {
             use crate::views::question_view::LocalQuestionKind;
             let cmd = match kind {
+                LocalQuestionKind::AuthManagement { .. } => "/auth",
                 LocalQuestionKind::Fork { .. } => "/fork",
                 LocalQuestionKind::NewSession => "/new",
                 LocalQuestionKind::CreditLimitUpsell { .. } => "credit-limit upsell",

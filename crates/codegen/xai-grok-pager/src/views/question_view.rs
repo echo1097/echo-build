@@ -78,6 +78,8 @@ pub enum QuestionFocus {
 /// submitted selection into an [`crate::app::actions::Action`].
 #[derive(Debug, Clone)]
 pub enum LocalQuestionKind {
+    /// Modal opened by `/auth` to update or securely clear the API key.
+    AuthManagement { configured: bool },
     /// Modal opened by `/fork` to resolve the worktree question.
     /// On submit, the selected option index plus the carried directive
     /// are translated into an

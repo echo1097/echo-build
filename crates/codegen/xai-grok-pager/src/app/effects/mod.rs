@@ -1993,7 +1993,7 @@ pub(crate) fn execute(
             tasks.spawn(async move {
                 let params = serde_json::json!({ "key": api_key });
                 let req = acp::ExtRequest::new(
-                    "x.ai/setApiKey",
+                    "echo.openrouter/setApiKey",
                     serde_json::value::to_raw_value(&params)
                         .expect("serialize OpenRouter API key")
                         .into(),

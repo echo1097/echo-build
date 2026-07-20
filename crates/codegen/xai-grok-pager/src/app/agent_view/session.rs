@@ -753,6 +753,25 @@ impl AgentView {
             }
         }
     }
+
+    /// Keep the displayed context total aligned with the selected model.
+    pub fn sync_context_window_to_model(&mut self) {
+        let Some(total) = self
+            .session
+            .models
+            .get_context_window()
+            .filter(|total| *total > 0)
+        else {
+            return;
+        };
+        let Some(snapshot) = self.context_state.as_mut() else {
+            return;
+        };
+
+        snapshot.total = total;
+        snapshot.usage_pct = xai_token_estimation::usage_percentage_u8(snapshot.used, total);
+        snapshot.free_tokens = xai_token_estimation::free_tokens(total, snapshot.used);
+    }
     /// Apply Build coding-credit balance only for non-chat agents.
     /// Gateway/chat-kind sessions keep credits unset so bars/warnings stay off.
     pub fn apply_credit_balance(

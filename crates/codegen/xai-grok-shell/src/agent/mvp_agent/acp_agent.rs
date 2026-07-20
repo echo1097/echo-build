@@ -23,6 +23,12 @@ impl acp::Agent for MvpAgent {
         arguments: acp::InitializeRequest,
     ) -> Result<acp::InitializeResponse, acp::Error> {
         tracing::debug!(target : "sampling_log", "Received initialize request");
+        match crate::auth::load_api_key(&crate::util::grok_home::grok_home()) {
+            Ok(Some(_)) => tracing::info!("loaded OpenRouter API key from credential store"),
+            Ok(None) => tracing::info!("OpenRouter API key is not configured"),
+            Err(error) => tracing::warn!(error = %error, "OpenRouter credential store is unavailable"),
+        }
+        self.auth_manager.clear_in_memory();
         xai_grok_telemetry::unified_log::info("agent initialized", None, None);
         self.start_subagent_coordinator();
         tokio::task::spawn_blocking(|| {
@@ -48,32 +54,7 @@ impl acp::Agent for MvpAgent {
                 );
             });
         xai_grok_workspace::trust::migrate_legacy_hook_trust();
-        if let Some(auth) = self.auth_manager.current() {
-            let user_id = auth.user_id.trim();
-            let needs_user_info = user_id.is_empty()
-                || user_id.eq_ignore_ascii_case("unknown");
-            xai_grok_telemetry::unified_log::info(
-                "auth init user_info check",
-                None,
-                Some(
-                    serde_json::json!(
-                        { "user_id" : user_id, "needs_user_info" : needs_user_info,
-                        "key_prefix" : crate ::auth::token_suffix(& auth.key),
-                        "rt_prefix" : auth.refresh_token.as_deref().map(crate
-                        ::auth::token_suffix), }
-                    ),
-                ),
-            );
-            if needs_user_info && let Err(e) = self.auth_manager.update(auth).await {
-                tracing::warn!(
-                    "Failed to refresh user info from proxy during new_session: {}", e
-                );
-            }
-        }
-        if !self.tier_allowed.get() && let Some(auth) = self.auth_manager.current() {
-            self.enforce_grok_code_access(&auth).await;
-        }
-        self.maybe_sync_bundle_in_background(false);
+        // OpenRouter-only startup has no Grok bundle service.
         let mut client_type = arguments
             .meta
             .as_ref()
@@ -141,92 +122,13 @@ impl acp::Agent for MvpAgent {
         if self.initialize_request.set(arguments).is_err() {
             tracing::info!("Initialize called on reconnect (already initialized)");
         }
-        let pre = self
-            .auth_manager
-            .current()
-            .map(|a| (
-                crate::auth::token_suffix(&a.key).to_owned(),
-                a
-                    .refresh_token
-                    .as_deref()
-                    .map(|t| crate::auth::token_suffix(t).to_owned()),
-            ));
-        self.auth_manager.force_reload_from_disk();
-        let post = self
-            .auth_manager
-            .current()
-            .map(|a| (
-                crate::auth::token_suffix(&a.key).to_owned(),
-                a
-                    .refresh_token
-                    .as_deref()
-                    .map(|t| crate::auth::token_suffix(t).to_owned()),
-            ));
-        xai_grok_telemetry::unified_log::info(
-            "auth init disk refresh",
-            None,
-            Some(
-                serde_json::json!(
-                    { "pre_key" : pre.as_ref().map(| p | & p.0), "pre_rt" : pre.as_ref()
-                    .and_then(| p | p.1.as_deref()), "post_key" : post.as_ref().map(| p |
-                    & p.0), "post_rt" : post.as_ref().and_then(| p | p.1.as_deref()),
-                    "changed" : pre.as_ref().map(| p | & p.0) != post.as_ref().map(| p |
-                    & p.0), }
-                ),
-            ),
-        );
-        xai_grok_telemetry::unified_log::info(
-            "auth: initialize() refreshed auth state from disk",
-            None,
-            Some(
-                serde_json::json!(
-                    { "has_current" : self.auth_manager.current().is_some(), "is_expired"
-                    : self.auth_manager.is_expired(), "auth_mode" : self.auth_manager
-                    .current().map(| a | format!("{:?}", a.auth_mode)), }
-                ),
-            ),
-        );
-        if !self.cfg.borrow().grok_com_config.api_key_auth_disabled()
-            && auth_method::read_xai_api_key_env().is_err()
-        {
-            match crate::auth::load_api_key(&crate::util::grok_home::grok_home()) {
-                Ok(Some(_)) => tracing::info!("auth: loaded API key from credential store"),
-                Ok(None) => {}
-                Err(error) => tracing::warn!(
-                    error = %error,
-                    "auth: failed to read API key from credential store"
-                ),
-            }
-        }
-        let disable_api_key_auth = self
-            .cfg
-            .borrow()
-            .grok_com_config
-            .api_key_auth_disabled();
-        {
-            let cfg = self.cfg.borrow();
-            let gc = &cfg.grok_com_config;
-            if disable_api_key_auth || gc.force_login_team_uuid.is_some() {
-                xai_grok_telemetry::unified_log::info(
-                    "auth: enterprise login policy active",
-                    None,
-                    Some(
-                        serde_json::json!(
-                            { "force_login_team_uuid" : gc.force_login_team_uuid.as_ref()
-                            .map(| t | format!("{t:?}")), "disable_api_key_auth_knob" :
-                            gc.disable_api_key_auth, "api_key_auth_disabled" :
-                            disable_api_key_auth, }
-                        ),
-                    ),
-                );
-            }
-        }
+        let disable_api_key_auth = false;
         let has_external_api_key = auth_method::should_advertise_xai_api_key(
             disable_api_key_auth,
             self.models_manager.models().values(),
         );
-        let init_has_current = self.auth_manager.current().is_some();
-        let init_is_expired = self.auth_manager.is_expired();
+        let init_has_current = false;
+        let init_is_expired = false;
         xai_grok_telemetry::unified_log::info(
             "auth init token state",
             None,
@@ -265,21 +167,10 @@ impl acp::Agent for MvpAgent {
                 );
             }
         }
-        let (
-            login_label,
-            has_auth_provider,
-            has_enterprise_oidc,
-            enterprise_oidc_issuer,
-        ) = {
-            let cfg = self.cfg.borrow();
-            let issuer = cfg.grok_com_config.oidc.as_ref().map(|o| o.issuer.clone());
-            (
-                cfg.grok_com_config.auth_provider_label.clone(),
-                cfg.grok_com_config.auth_provider_command.is_some(),
-                cfg.grok_com_config.oidc.is_some(),
-                issuer,
-            )
-        };
+        let login_label: Option<String> = None;
+        let has_auth_provider = false;
+        let has_enterprise_oidc = false;
+        let enterprise_oidc_issuer: Option<String> = None;
         if has_enterprise_oidc {
             let issuer = enterprise_oidc_issuer
                 .as_deref()
@@ -300,7 +191,7 @@ impl acp::Agent for MvpAgent {
                 "auth: advertising grok.com auth method",
             );
         }
-        let preferred_method = self.cfg.borrow().grok_com_config.preferred_method;
+        let preferred_method = None;
         let has_external_api_key = match preferred_method {
             Some(crate::auth::PreferredAuthMethod::Oidc) => false,
             _ => has_external_api_key,
@@ -369,21 +260,12 @@ impl acp::Agent for MvpAgent {
         let current_working_directory = self.launch_cwd.clone();
         let hostname = gethostname::gethostname();
         let mcp_servers: Vec<crate::extensions::mcp::McpServerEntry> = Vec::new();
-        let fetch_managed_mcps = self.cfg.borrow().managed_mcps_enabled
-            && self.can_fetch_managed_mcps();
+        let fetch_managed_mcps = false;
         if self.cfg.borrow().managed_mcps_enabled && !fetch_managed_mcps {
             tracing::info!("Managed MCP fetch: DISABLED");
         }
         self.spawn_initialize_launch_mcp_setup(fetch_managed_mcps);
-        self.spawn_managed_gateway_tool_catalog_fetch();
-        {
-            let agent_ref = LocalRef::new(self);
-            tokio::task::spawn_local(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                agent_ref.get().emit_announcements(AnnouncementsPushMode::SeedNewClient);
-            });
-        }
-        self.spawn_announcements_refresh();
+        // Grok managed tools and announcements are intentionally disabled.
         self.spawn_heap_profile_monitor();
         let init_model_state = if crate::agent::chat_modes::process_chat_mode_enabled() {
             self.chat_modes.model_state().await
@@ -448,56 +330,19 @@ impl acp::Agent for MvpAgent {
             None,
             Some(serde_json::json!({ "method" : arguments.method_id.0.as_ref() })),
         );
-        if let Some(preferred) = self.cfg.borrow().grok_com_config.preferred_method {
-            let kind = auth_method::AuthMethodKind::from_id(&arguments.method_id);
-            let allowed = match preferred {
-                crate::auth::PreferredAuthMethod::ApiKey => kind.is_api_key(),
-                crate::auth::PreferredAuthMethod::Oidc => kind.is_session_based(),
-            };
-            if !allowed {
-                let msg = match preferred {
-                    crate::auth::PreferredAuthMethod::ApiKey => {
-                        auth_method::PREFERRED_API_KEY_UNAVAILABLE
-                    }
-                    crate::auth::PreferredAuthMethod::Oidc => {
-                        "preferred_method=oidc; API-key auth is not allowed."
-                    }
-                };
-                emit_login_span(
-                    false,
-                    arguments.method_id.0.as_ref(),
-                    None,
-                    Some("preferred_method_mismatch"),
-                );
-                return Err(acp::Error::auth_required().data(msg));
-            }
+        let auth_kind = auth_method::AuthMethodKind::from_id(&arguments.method_id);
+        if !auth_kind.is_api_key() {
+            return Err(
+                acp::Error::invalid_params()
+                    .data("Only OpenRouter API-key authentication is supported."),
+            );
         }
         match arguments.method_id.0.as_ref() {
-            auth_method::XAI_API_KEY_METHOD_ID => {
-                if self.cfg.borrow().grok_com_config.api_key_auth_disabled() {
-                    emit_login_span(false, "api_key", None, Some("disabled_by_admin"));
-                    return Err(
-                        acp::Error::auth_required()
-                            .data("API-key auth is disabled by your administrator."),
-                    );
-                }
+            auth_method::XAI_API_KEY_METHOD_ID | auth_method::LEGACY_XAI_API_KEY_METHOD_ID => {
                 let mut sampling_config = self.sampling_config.borrow_mut();
                 if sampling_config.api_key.is_none() {
                     if let Ok(api_key) = auth_method::read_xai_api_key_env() {
-                        sampling_config.api_key = Some(api_key.clone());
-                        if let Err(e) = crate::auth::save_api_key(
-                            &crate::util::grok_home::grok_home(),
-                            &api_key,
-                        ) {
-                            tracing::warn!(
-                                "failed to persist API key to credential store: {e}"
-                            );
-                            xai_grok_telemetry::unified_log::warn(
-                                "failed to persist API key to credential store",
-                                None,
-                                Some(serde_json::json!({ "error" : e.to_string() })),
-                            );
-                        }
+                        sampling_config.api_key = Some(api_key);
                     } else if !self
                         .models_manager
                         .models()
@@ -507,18 +352,13 @@ impl acp::Agent for MvpAgent {
                         emit_login_span(false, "api_key", None, Some("no_credentials"));
                         return Err(
                             acp::Error::auth_required()
-                                .data(
-                                    "Set XAI_API_KEY or add api_key/env_key to config.toml.",
-                                ),
+                                .data("Add an OpenRouter API key to the secure credential store."),
                         );
                     }
                 }
                 self.set_auth_method(arguments.method_id.clone());
                 self.sync_process_static_api_key(None);
                 self.ensure_telemetry_client();
-                if crate::agent::chat_modes::process_chat_mode_enabled() {
-                    self.chat_modes.warm_in_background();
-                }
                 emit_login_span(true, "api_key", None, None);
                 log_event(xai_grok_telemetry::events::Login {
                     auth_method: "api_key".to_string(),
@@ -3168,8 +3008,28 @@ impl acp::Agent for MvpAgent {
         #[allow(unused_mut)]
         let mut backend_no_bridge_err: Option<acp::Error> = None;
         let method = args.method.clone();
+        let legacy_remote_method = matches!(
+            method.as_ref(),
+            "x.ai/workspaces/list"
+                | "x.ai/feedback"
+                | "x.ai/feedback/dismiss"
+                | "x.ai/btw"
+                | "x.ai/billing"
+                | "x.ai/auto-topup-rule"
+                | "x.ai/share_session"
+                | "x.ai/privacy/setCodingDataRetention"
+                | "x.ai/rollout/survey"
+                | "x.ai/suggest"
+                | "x.ai/suggestPrompt"
+        ) || method.as_ref().starts_with("x.ai/cloud/");
+        if legacy_remote_method {
+            return Err(acp::Error::method_not_found());
+        }
         let result = match method.as_ref() {
-            "x.ai/getApiKey" | "x.ai/setApiKey" => {
+            "echo.openrouter/getApiKeyStatus"
+            | "echo.openrouter/setApiKey"
+            | "x.ai/getApiKey"
+            | "x.ai/setApiKey" => {
                 crate::extensions::auth::handle(self, &args).await
             }
             "x.ai/session/info" | "x.ai/session/close" | "x.ai/session/list"

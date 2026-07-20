@@ -179,11 +179,7 @@ pub fn full_logo_line_count() -> u16 {
 }
 
 fn full_logo_line_count_for(hidden: bool) -> u16 {
-    if hidden {
-        0
-    } else {
-        count_lines(LOGO)
-    }
+    if hidden { 0 } else { count_lines(LOGO) }
 }
 
 pub fn full_logo_visual_width() -> u16 {
@@ -191,11 +187,7 @@ pub fn full_logo_visual_width() -> u16 {
 }
 
 fn full_logo_visual_width_for(hidden: bool) -> u16 {
-    if hidden {
-        0
-    } else {
-        visual_width(LOGO)
-    }
+    if hidden { 0 } else { visual_width(LOGO) }
 }
 
 pub fn render_full_logo(area: Rect, buf: &mut Buffer, theme: &Theme) {

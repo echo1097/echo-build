@@ -53,6 +53,21 @@ pub fn fmt_tokens(n: u64) -> String {
     }
 }
 
+/// Format a model context window using the unit convention it was published with.
+pub fn fmt_context_window(n: u64) -> String {
+    const BINARY_BLOCK: u64 = 65_536;
+    const KIB: u64 = 1_024;
+    const MIB: u64 = 1_048_576;
+
+    if n >= MIB && n % MIB == 0 {
+        format!("{}M", n / MIB)
+    } else if n >= KIB && (n.is_power_of_two() || n % BINARY_BLOCK == 0) {
+        format!("{}K", n / KIB)
+    } else {
+        fmt_tokens(n)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Color blending
 // ---------------------------------------------------------------------------
@@ -209,7 +224,7 @@ pub fn context_bar_line_for_session(
 
     // Default form drives the line width: `used / total`, right-padded to the
     // minimum hover width so the two states always render at the same width.
-    let mut token_str = format!("{} / {}", fmt_tokens(used), fmt_tokens(total));
+    let mut token_str = format!("{} / {}", fmt_tokens(used), fmt_context_window(total));
     let natural_width = token_str.chars().count() as u16;
     let min_width = BAR_PCT_GAP + PCT_WIDTH;
     if natural_width < min_width {
@@ -301,6 +316,13 @@ mod tests {
         assert_eq!(fmt_tokens(1_200_000), "1.2M");
         assert_eq!(fmt_tokens(12_000_000), "12M");
         assert_eq!(fmt_tokens(123_000_000), "123M");
+    }
+
+    #[test]
+    fn test_context_window_uses_binary_model_units() {
+        assert_eq!(fmt_context_window(262_144), "256K");
+        assert_eq!(fmt_context_window(1_048_576), "1M");
+        assert_eq!(fmt_context_window(2_000_000), "2.0M");
     }
 
     #[test]

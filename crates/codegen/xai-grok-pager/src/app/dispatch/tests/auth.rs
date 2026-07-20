@@ -1,6 +1,51 @@
 //! Tests for login, logout, account switching, and auth-code dispatchers.
 
 use super::*;
+use crate::app::app_view::InputOutcome;
+
+#[test]
+fn auth_management_shows_update_and_secure_logout_for_configured_key() {
+    use crate::views::question_view::{LocalQuestionKind, QuestionSelection};
+
+    let mut app = test_app_with_agent();
+    app.is_api_key_auth = true;
+
+    let effects = dispatch(Action::ShowAuthManagement, &mut app);
+
+    assert!(effects.is_empty());
+    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+    let mut question_view = agent.question_view.take().expect("auth modal must open");
+    assert_eq!(question_view.questions[0].options.len(), 2);
+    assert_eq!(
+        question_view.questions[0].options[1].label,
+        "Clear API key and log out"
+    );
+
+    question_view.selections[0] = QuestionSelection::Single(Some(1));
+    let kind = question_view.local_kind.take().unwrap();
+    assert!(matches!(
+        kind,
+        LocalQuestionKind::AuthManagement { configured: true }
+    ));
+    let outcome =
+        crate::app::agent_view::translate_local_submit_for_test(&question_view, kind, false);
+    assert!(matches!(outcome, InputOutcome::Action(Action::Logout)));
+}
+
+#[test]
+fn auth_management_only_offers_key_entry_when_no_key_is_configured() {
+    let mut app = test_app_with_agent();
+    app.is_api_key_auth = false;
+
+    dispatch(Action::ShowAuthManagement, &mut app);
+
+    let question_view = app.agents[&AgentId(0)]
+        .question_view
+        .as_ref()
+        .expect("auth modal must open");
+    assert_eq!(question_view.questions[0].options.len(), 1);
+    assert_eq!(question_view.questions[0].options[0].label, "Add API key");
+}
 
 #[test]
 fn cta_mcps_loaded_needs_auth_opens_modal_and_seeds() {

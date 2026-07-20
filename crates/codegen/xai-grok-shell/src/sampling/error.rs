@@ -18,14 +18,14 @@ use agent_client_protocol as acp;
 /// stop reason with no detail.
 pub const RATE_LIMITED_ERROR_CODE: i32 = -32003;
 
-/// OAuth / session rate-limit copy (personal plan upgrade path).
 pub const RATE_LIMITED_USER_MESSAGE_OAUTH: &str =
-    "You\u{2019}ve hit the rate limit for your plan. Upgrade your account or try again later.";
+    "OpenRouter is rate limiting this request. Please try again later.";
 
 /// API key / team rate-limit copy. Personal grok.com upgrades do not raise API
 /// team limits; admins purchase credits or a higher spend-based tier.
 /// See https://docs.x.ai/developers/rate-limits#rate-limit-tiers
-pub const RATE_LIMITED_USER_MESSAGE_API_KEY: &str = "You\u{2019}ve hit your team\u{2019}s API rate limit. Ask a team admin to purchase more credits for higher limits, or try again later. See https://docs.x.ai/developers/rate-limits#rate-limit-tiers";
+pub const RATE_LIMITED_USER_MESSAGE_API_KEY: &str =
+    "OpenRouter is rate limiting this request. Please try again later.";
 
 /// Well-known free-usage exhaustion code CCP returns on HTTP 429.
 /// Matches `prod_util_well_known_errors::SUBSCRIPTION_FREE_USAGE_EXHAUSTED`.
@@ -35,7 +35,7 @@ pub const FREE_USAGE_EXHAUSTED_ERROR_CODE: &str = "subscription:free-usage-exhau
 
 /// User-facing free-usage exhaustion copy (paywall). Deliberately promises no
 /// reset duration — the quota window is backend-config-driven.
-pub const FREE_USAGE_USER_MESSAGE: &str = "You\u{2019}ve reached your free Grok Build usage limit for now. Get SuperGrok for much higher limits, or try again later: https://grok.com/supergrok?referrer=grok-build";
+pub const FREE_USAGE_USER_MESSAGE: &str = "OpenRouter credits are insufficient for this request.";
 
 /// Whether flattened server detail is free-usage-quota exhaustion (paywall),
 /// not transient throttling. Sniffs the well-known code embedded by
@@ -117,22 +117,7 @@ pub fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
             // Surfacing the proxy's message via internal_error keeps the
             // explanation visible to the user without triggering the client's
             // re-auth flow on -32000.
-            StatusCode::FORBIDDEN => {
-                let message = if message.contains("requires a Grok subscription")
-                    && crate::agent::auth_method::has_xai_api_key_env()
-                {
-                    format!(
-                        "{message}\n\nYou have an API key set (XAI_API_KEY). \
-                         Your cached OAuth session is being used instead. \
-                         To use your API key, run `grok logout` or type /logout in the TUI."
-                    )
-                } else {
-                    message
-                };
-                // 403 is content-safety, never auth: on this setup path it stays
-                // `internal_error` → `server_error`.
-                acp::Error::internal_error().data(message)
-            }
+            StatusCode::FORBIDDEN => acp::Error::internal_error().data(message),
             StatusCode::BAD_REQUEST => acp::Error::invalid_params().data(message),
             StatusCode::NOT_FOUND => acp::Error::resource_not_found(None).data(message),
             StatusCode::PAYLOAD_TOO_LARGE => acp::Error::invalid_params().data(message),

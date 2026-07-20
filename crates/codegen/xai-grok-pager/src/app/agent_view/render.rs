@@ -734,11 +734,14 @@ impl AgentView {
         let appearance = self.scrollback.appearance().clone();
         let layout_cfg = &appearance.scrollback.layout;
         let scrollbar_cfg = &appearance.scrollback.scrollbar;
-        let model_id = self
+        let mut model_id = self
             .session
             .models
             .current_model_name()
             .unwrap_or_else(|| "unknown".to_string());
+        if !self.session.models.current_model_agent_capable() {
+            model_id.push_str(" · Chat only");
+        }
         let effective_plan = self.plan_mode_pending.unwrap_or(self.plan_mode_active);
         let casual_commenting = self.is_casual_commenting();
         let prompt_focused = if self.plan_approval_view.is_some() {

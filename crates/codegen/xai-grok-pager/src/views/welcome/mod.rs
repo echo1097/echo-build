@@ -1593,9 +1593,9 @@ fn render_openrouter_key_entry(
     .alignment(Alignment::Center)
     .render(title_area, buf);
     Paragraph::new("Enter your OpenRouter API key.")
-    .style(Style::default().fg(theme.gray_bright))
-    .alignment(Alignment::Center)
-    .render(body_area, buf);
+        .style(Style::default().fg(theme.gray_bright))
+        .alignment(Alignment::Center)
+        .render(body_area, buf);
 
     if let Some(message) = error {
         Paragraph::new(message)

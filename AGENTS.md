@@ -5,4 +5,5 @@
 - Fail securely when the credential store is unavailable. Do not add plaintext or session-only persistence fallbacks.
 - Keep OpenRouter endpoint, model, header, and routing changes out of scope until they are requested separately.
 - Keep the welcome splash branded as a SpaceXAI fork for the OpenRouter ecosystem. Do not surface Grok subscription upgrade promotions, links, or actions in the TUI.
+- TUI release notes current at `crates/codegen/xai-grok-shell-base/assets/release-notes.md`. When the user asks you to update them either rewrite (if specifically asked to do so) or update them accordingly with the current git diff.
 - Preserve unrelated worktree changes and run the relevant focused tests plus the pager binary build after frontend changes.

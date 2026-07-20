@@ -61,7 +61,10 @@ enum AttemptOutcome {
     /// captured (e.g. the failure was synthesised inside the L2
     /// transform), `error` was reconstructed from the
     /// [`SamplingErrorInfo`].
-    Failed { error: SamplingError },
+    Failed {
+        error: SamplingError,
+        emitted_output: bool,
+    },
     /// `cancel_token` fired mid-attempt. The retry loop bails out
     /// without further attempts.
     Cancelled,
@@ -210,7 +213,10 @@ pub(crate) async fn run_request_task(
                     return request_id;
                 }
             }
-            AttemptOutcome::Failed { error } => {
+            AttemptOutcome::Failed {
+                error,
+                emitted_output,
+            } => {
                 // Doom-loop resamples run on their own budget and never
                 // consult the transport classifier, so no classifier change
                 // can silently debit the transport budget for a doom failure.
@@ -234,6 +240,11 @@ pub(crate) async fn run_request_task(
                     );
                     tokio::time::sleep(backoff).await;
                     continue;
+                }
+                if emitted_output {
+                    emit_failed(&event_tx, &request_id, &error);
+                    send_completion(&mut completion_tx, Err(error));
+                    return request_id;
                 }
                 if !apply_retry_decision(
                     &error,
@@ -506,6 +517,7 @@ async fn drive_l2(
     doom_check: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
 ) -> AttemptOutcome {
     let mut l2 = pin!(l2);
+    let mut emitted_output = false;
     loop {
         tokio::select! {
             biased;
@@ -524,12 +536,14 @@ async fn drive_l2(
                                     triggers,
                                     aborted_at_chunk: None,
                                 },
+                                emitted_output,
                             };
                         }
                     }
                     if response.stop_reason == Some(xai_grok_sampling_types::StopReason::Length) {
                         return AttemptOutcome::Failed {
                             error: SamplingError::MaxTokensTruncation,
+                            emitted_output,
                         };
                     }
                     // A content-filtered turn (Anthropic refusal, OpenAI
@@ -549,9 +563,13 @@ async fn drive_l2(
                         .ok()
                         .and_then(|mut g| g.take());
                     let error = raw.unwrap_or_else(|| synthesize_from_info(&info));
-                    return AttemptOutcome::Failed { error };
+                    return AttemptOutcome::Failed {
+                        error,
+                        emitted_output,
+                    };
                 }
                 Some(other) => {
+                    emitted_output |= event_is_user_visible_output(&other);
                     let _ = event_tx.send(retag(other, &request_id));
                 }
                 None => {
@@ -563,11 +581,23 @@ async fn drive_l2(
                         error: SamplingError::EventStreamError(
                             "stream dropped without terminal event".to_string(),
                         ),
+                        emitted_output,
                     };
                 }
             }
         }
     }
+}
+
+fn event_is_user_visible_output(event: &SamplingEvent) -> bool {
+    matches!(
+        event,
+        SamplingEvent::FirstToken { .. }
+            | SamplingEvent::ChannelToken { .. }
+            | SamplingEvent::ToolCallDelta { .. }
+            | SamplingEvent::BackendToolCallStarted { .. }
+            | SamplingEvent::BackendToolCallCompleted { .. }
+    )
 }
 
 /// Re-tag a forwarded event with the canonical request_id. The L2
@@ -857,5 +887,22 @@ mod tests {
             SamplingError::EventStreamError(msg) => assert_eq!(msg, "first"),
             other => panic!("expected EventStreamError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn only_content_events_block_replay_after_midstream_failure() {
+        let request_id = RequestId::random();
+        assert!(!event_is_user_visible_output(
+            &SamplingEvent::StreamStarted {
+                request_id: request_id.clone(),
+                timestamp_ms: 0,
+            }
+        ));
+        assert!(event_is_user_visible_output(&SamplingEvent::ChannelToken {
+            request_id,
+            channel: crate::events::SamplingChannel::Text,
+            text: "partial".to_string(),
+            chunk_index: 0,
+        }));
     }
 }

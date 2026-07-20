@@ -165,7 +165,8 @@ async fn handle_connection(ws: WebSocket, state: Arc<ServerState>, peer_addr: So
                 .name("agent-persistent".to_string())
                 .spawn(move || {
                     // Prefetch models before creating the runtime (blocking is OK here)
-                    let auth = agent_config.create_auth_manager().current();
+                    let _ = crate::auth::load_api_key(&crate::util::grok_home::grok_home());
+                    let auth = None;
                     let fetch_auth =
                         ModelFetchAuth::resolve(&agent_config.endpoints, auth.is_some());
                     let prefetched_models = if auth.is_some()

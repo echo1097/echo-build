@@ -976,6 +976,11 @@ pub(super) fn handle_prompt_response(
     http_status: Option<u16>,
     prompt_id: Option<String>,
 ) -> Vec<Effect> {
+    let is_api_key_auth = app.is_api_key_auth
+        || app.login_method_id.as_ref().is_some_and(|id| {
+            id.0.as_ref() == xai_grok_shell::agent::auth_method::OPENROUTER_API_KEY_METHOD_ID
+        });
+
     // A server-authoritative queued prompt may have drained into
     // the running slot while this turn was still finishing (the leader's
     // `running_prompt_id` broadcast can arrive before this
@@ -1111,7 +1116,7 @@ pub(super) fn handle_prompt_response(
             || result
                 .as_ref()
                 .err()
-                .is_some_and(|e| is_credit_limit_error(http_status, e));
+                .is_some_and(|e| is_credit_limit_error(http_status, e, is_api_key_auth));
         // A 401/auth failure already surfaced an actionable
         // `ReAuthRequired` prompt via the RetryState handler (which
         // runs before this PromptResponse). Suppress the redundant

@@ -834,8 +834,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Models,
             owner: SettingOwner::Shell,
             label: "Default model",
-            description: "Model used for new sessions. Changing this also switches the active session. Pick `(no override)` to clear.",
-            keywords: &["model", "default", "agent", "llm", "grok", "switch"],
+            description: "Model used for new sessions. Changing this also switches the active session. Choose OpenRouter Auto to clear.",
+            keywords: &["model", "default", "agent", "llm", "openrouter", "switch"],
             kind: SettingKind::DynamicEnum {
                 default: "",
                 source: DynamicEnumSource::ActiveModelCatalog,

@@ -1558,6 +1558,7 @@ pub(in crate::app::dispatch) fn set_default_model_inner(
         //
         // `set_current(_, None)` resets `reasoning_effort` to model default.
         agent.session.models.set_current(id.clone(), None);
+        agent.sync_context_window_to_model();
     }
     // Mirror the new default into the app-level model state too. A later `/new`
     // or `/clear` creates a fresh session by cloning `app.models`

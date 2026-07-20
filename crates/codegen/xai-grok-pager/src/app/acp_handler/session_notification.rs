@@ -126,7 +126,10 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
         }
         _ => {}
     }
-    let is_api_key_auth = app.is_api_key_auth;
+    let is_api_key_auth = app.is_api_key_auth
+        || app.login_method_id.as_ref().is_some_and(|id| {
+            id.0.as_ref() == xai_grok_shell::agent::auth_method::OPENROUTER_API_KEY_METHOD_ID
+        });
     let matched = match find_session_match(app, &session_notif.session_id) {
         Some(m) => m,
         None => {
@@ -848,6 +851,7 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
                 .session
                 .models
                 .set_current(new_model_id.clone(), effort);
+            agent.sync_context_window_to_model();
             agent.session.user_model_preference = Some(new_model_id.clone());
             let resolved_effort = agent.session.models.reasoning_effort;
             let actually_changed =
@@ -1248,7 +1252,8 @@ pub(super) fn apply_retry_state(
                     },
                 );
             }
-            is_credit_limit = super::super::dispatch::is_credit_limit_error(None, reason);
+            is_credit_limit =
+                super::super::dispatch::is_credit_limit_error(None, reason, is_api_key_auth);
             let is_free_usage = *rate_limited
                 && xai_grok_shell::sampling::error::is_free_usage_exhausted_error(reason);
             if is_credit_limit {
@@ -1281,7 +1286,8 @@ pub(super) fn apply_retry_state(
             if error_type == "encrypted_content_mismatch" {
                 session.model_incompatible = true;
             }
-            is_credit_limit = super::super::dispatch::is_credit_limit_error(None, message);
+            is_credit_limit =
+                super::super::dispatch::is_credit_limit_error(None, message, is_api_key_auth);
             if is_credit_limit {
                 session.credit_limit_blocked = true;
             } else if is_reauthable_failure(Some(error_type.as_str()), message) {

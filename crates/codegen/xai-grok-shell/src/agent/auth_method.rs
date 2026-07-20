@@ -20,24 +20,27 @@ pub(crate) fn new_shared_auth_method_id(initial: Option<acp::AuthMethodId>) -> S
     ))
 }
 
-/// Env var that, when set, advertises `xai.api_key` as a viable auth method.
-///
-/// Kept as a constant so test code and the production check stay in sync.
+/// Legacy test-only environment names. Production credentials come from Keychain.
 pub const XAI_API_KEY_ENV_VAR: &str = "XAI_API_KEY";
 
 /// Legacy env var name. Checked as a fallback when `XAI_API_KEY` is not set,
 /// so existing deployments that use the old name keep working.
 pub const LEGACY_XAI_API_KEY_ENV_VAR: &str = "GROK_CODE_XAI_API_KEY";
 
-/// Read the active process API key.
-///
-/// Checks `XAI_API_KEY` first, then falls back to the legacy
-/// `GROK_CODE_XAI_API_KEY` for backward compatibility, then the key loaded
-/// into memory from the operating system credential store.
+/// Read the active OpenRouter key from the in-memory Keychain cache.
 pub fn read_xai_api_key_env() -> Result<String, std::env::VarError> {
-    std::env::var(XAI_API_KEY_ENV_VAR)
-        .or_else(|_| std::env::var(LEGACY_XAI_API_KEY_ENV_VAR))
-        .or_else(|error| crate::auth::cached_api_key().ok_or(error))
+    if let Some(api_key) = crate::auth::cached_api_key() {
+        return Ok(api_key);
+    }
+
+    #[cfg(test)]
+    {
+        return std::env::var(XAI_API_KEY_ENV_VAR)
+            .or_else(|_| std::env::var(LEGACY_XAI_API_KEY_ENV_VAR));
+    }
+
+    #[cfg(not(test))]
+    Err(std::env::VarError::NotPresent)
 }
 
 /// Returns `true` when an environment or in-memory credential is available.
@@ -140,33 +143,11 @@ pub struct BuiltAuthMethods {
 /// - `Oidc`: `cached_token` (if any) + interactive login; never `xai.api_key`.
 ///   Default is `cached_token` when present, else `None` (interactive).
 pub fn build_auth_methods(inputs: AuthMethodsBuildInputs<'_>) -> BuiltAuthMethods {
-    let AuthMethodsBuildInputs {
-        has_external_api_key,
-        has_cached_token,
-        has_enterprise_oidc,
-        enterprise_oidc_issuer,
-        login_label,
-        has_auth_provider_command,
-        preferred_method,
-    } = inputs;
-
-    match preferred_method {
-        Some(PreferredAuthMethod::ApiKey) => build_pinned_api_key(has_external_api_key),
-        Some(PreferredAuthMethod::Oidc) => build_pinned_oidc(
-            has_cached_token,
-            has_enterprise_oidc,
-            enterprise_oidc_issuer,
-            login_label,
-            has_auth_provider_command,
-        ),
-        None => build_unpinned(
-            has_external_api_key,
-            has_cached_token,
-            has_enterprise_oidc,
-            enterprise_oidc_issuer,
-            login_label,
-            has_auth_provider_command,
-        ),
+    BuiltAuthMethods {
+        methods: vec![xai_api_key_auth_method()],
+        default_auth_method_id: inputs
+            .has_external_api_key
+            .then(|| acp::AuthMethodId::new(OPENROUTER_API_KEY_METHOD_ID)),
     }
 }
 
@@ -300,7 +281,7 @@ pub enum AuthMethodKind {
 impl AuthMethodKind {
     pub fn from_id(id: &acp::AuthMethodId) -> Self {
         match id.0.as_ref() {
-            XAI_API_KEY_METHOD_ID => Self::XaiApiKey,
+            XAI_API_KEY_METHOD_ID | LEGACY_XAI_API_KEY_METHOD_ID => Self::XaiApiKey,
             CACHED_TOKEN_AUTH_METHOD_ID => Self::CachedToken,
             GROK_COM_METHOD_ID => Self::GrokCom,
             OIDC_METHOD_ID => Self::Oidc,
@@ -393,7 +374,8 @@ pub fn session_token_auth_gate(
 pub const AUTH_ERROR_SESSION_EXPIRED: &str =
     "Session expired. Run `grok login` to re-authenticate.";
 
-pub const AUTH_ERROR_API_KEY: &str = "Authentication failed. Run `grok login`, set XAI_API_KEY, or add api_key to ~/.grok/config.toml.";
+pub const AUTH_ERROR_API_KEY: &str =
+    "Authentication failed. Add an OpenRouter API key to the operating system credential store.";
 
 /// Next ACP method id when `cached_token` cannot proceed (missing / expired /
 /// legacy WebLogin), or `None` when fallthrough is forbidden.
@@ -419,22 +401,26 @@ pub fn method_id_after_cached_token_unavailable(
 }
 
 /// Error when `preferred_method=api_key` but no key/BYOK credentials exist.
-pub const PREFERRED_API_KEY_UNAVAILABLE: &str = "preferred_method=api_key but no API key is configured (set XAI_API_KEY or model api_key/env_key in config.toml).";
+pub const PREFERRED_API_KEY_UNAVAILABLE: &str =
+    "OpenRouter API key is not available in the operating system credential store.";
 
 /// Error when `preferred_method=oidc` but the session path cannot proceed.
 pub const PREFERRED_OIDC_UNAVAILABLE: &str =
     "preferred_method=oidc but no session is available. Run `grok login` to authenticate.";
 
-pub const XAI_API_KEY_METHOD_ID: &str = "xai.api_key";
+pub const OPENROUTER_API_KEY_METHOD_ID: &str = "openrouter.api_key";
+pub const LEGACY_XAI_API_KEY_METHOD_ID: &str = "xai.api_key";
+/// Kept as a source-compatible alias for pager and extension code.
+pub const XAI_API_KEY_METHOD_ID: &str = OPENROUTER_API_KEY_METHOD_ID;
 pub fn xai_api_key_auth_method() -> acp::AuthMethod {
     acp::AuthMethod::Agent(
         acp::AuthMethodAgent::new(
             acp::AuthMethodId::new(XAI_API_KEY_METHOD_ID),
-            "xai.api_key".to_string(),
+            "OpenRouter API key".to_string(),
         )
-        .description(Some(format!(
-            "{XAI_API_KEY_ENV_VAR} or api_key/env_key in config.toml"
-        ))),
+        .description(Some(
+            "Stored securely in the operating system credential store".to_string(),
+        )),
     )
 }
 
@@ -589,6 +575,23 @@ mod tests {
         methods.first().map(|m| AuthMethodKind::from_id(m.id()))
     }
 
+    #[test]
+    fn openrouter_is_the_only_advertised_auth_method() {
+        let missing_key = build_auth_methods(default_inputs());
+        assert_eq!(method_ids(&missing_key), vec![OPENROUTER_API_KEY_METHOD_ID]);
+        assert!(missing_key.default_auth_method_id.is_none());
+
+        let configured = build_auth_methods(AuthMethodsBuildInputs {
+            has_external_api_key: true,
+            has_cached_token: true,
+            has_enterprise_oidc: true,
+            preferred_method: Some(PreferredAuthMethod::Oidc),
+            ..default_inputs()
+        });
+        assert_eq!(method_ids(&configured), vec![OPENROUTER_API_KEY_METHOD_ID]);
+        assert_eq!(default_id(&configured), Some(OPENROUTER_API_KEY_METHOD_ID));
+    }
+
     // build_auth_methods regression: pin production call-site ordering.
     // Reordering so `xai.api_key` is after login methods must fail the tests below.
 
@@ -628,6 +631,7 @@ mod tests {
     /// list (skips login screen), but `default_auth_method_id` is
     /// `cached_token` (keeps OIDC refresh alive).
     #[test]
+    #[ignore = "legacy Grok session authentication was removed"]
     fn byok_with_cached_token_keeps_xai_api_key_first() {
         let inputs = AuthMethodsBuildInputs {
             has_external_api_key: true,
@@ -663,6 +667,7 @@ mod tests {
     /// `grok.com` — `auth_methods.first()` does NOT need interactive login,
     /// so this user also skips the login screen at startup.
     #[test]
+    #[ignore = "legacy Grok session authentication was removed"]
     fn session_only_user_first_method_is_cached_token() {
         let inputs = AuthMethodsBuildInputs {
             has_external_api_key: false,
@@ -689,6 +694,7 @@ mod tests {
     /// `default_auth_method_id` is None so the pager falls back to the
     /// advertised login method.
     #[test]
+    #[ignore = "fresh users now receive OpenRouter key entry"]
     fn fresh_user_only_advertises_grok_com_and_requires_login() {
         let built = build_auth_methods(default_inputs());
 
@@ -700,6 +706,7 @@ mod tests {
     /// Enterprise OIDC replaces `grok.com` (mutually exclusive). xai.api_key,
     /// when present, still leads.
     #[test]
+    #[ignore = "legacy Grok OIDC authentication was removed"]
     fn enterprise_oidc_replaces_grok_com_but_xai_api_key_still_first() {
         let inputs = AuthMethodsBuildInputs {
             has_external_api_key: true,
@@ -731,6 +738,7 @@ mod tests {
     /// as `meta.external_provider = true`. Pinning this here so the pager's
     /// `AuthStartMode::Command` path keeps working.
     #[test]
+    #[ignore = "legacy Grok auth-provider commands were removed"]
     fn auth_provider_command_sets_external_provider_meta() {
         let inputs = AuthMethodsBuildInputs {
             has_auth_provider_command: true,
@@ -767,6 +775,7 @@ mod tests {
     /// `XaiApiKey`.
     #[test]
     #[serial]
+    #[ignore = "per-model plaintext credentials are no longer active"]
     fn enterprise_byok_config_does_not_require_login() {
         const TEST_ENV_VAR: &str = "TEST_ENTERPRISE_REGRESSION_AUTH_TOKEN";
 
@@ -865,6 +874,7 @@ mod tests {
     /// and the pager sends the user to the deployment's login method instead.
     #[test]
     #[serial]
+    #[ignore = "legacy Grok policy does not disable OpenRouter Keychain auth"]
     fn disable_api_key_auth_suppresses_xai_api_key_method() {
         let _set = EnvGuard::set(XAI_API_KEY_ENV_VAR, "xai-external-key");
         let cfg = Config::default();
@@ -945,6 +955,7 @@ mod tests {
     /// prevents regressions.
     #[test]
     #[serial]
+    #[ignore = "legacy Grok session tokens are no longer active"]
     fn grok_login_legacy_token_does_not_require_login() {
         use crate::auth::{AuthManager, AuthMode, GrokAuth, GrokComConfig};
 
@@ -1029,6 +1040,7 @@ mod tests {
     /// above isn't trivially passing.
     #[test]
     #[serial]
+    #[ignore = "legacy Grok login fallback was removed"]
     fn no_legacy_token_means_no_cached_token_advertised() {
         use crate::auth::{AuthManager, GrokComConfig};
 
@@ -1068,6 +1080,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy preferred-auth policy was removed"]
     fn pin_api_key_without_key_fails_closed_even_with_session() {
         let built = build_auth_methods(AuthMethodsBuildInputs {
             has_external_api_key: false,
@@ -1080,6 +1093,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy Grok OIDC authentication was removed"]
     fn pin_oidc_with_session_hides_api_key() {
         let built = build_auth_methods(AuthMethodsBuildInputs {
             has_external_api_key: true,
@@ -1095,6 +1109,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy Grok OIDC authentication was removed"]
     fn pin_oidc_without_session_is_interactive_only() {
         let built = build_auth_methods(AuthMethodsBuildInputs {
             has_external_api_key: true,

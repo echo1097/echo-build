@@ -679,7 +679,11 @@ pub(super) fn render_rows(
                     }
                     SettingValue::String(s) => {
                         if s.is_empty() && matches!(meta.kind, SettingKind::DynamicEnum { .. }) {
-                            "(no override)".to_string()
+                            if meta.key == "default_model" {
+                                "Use OpenRouter Auto".to_string()
+                            } else {
+                                "(no override)".to_string()
+                            }
                         } else {
                             s.clone()
                         }
@@ -844,7 +848,11 @@ fn compute_filtered_row_heights(state: &SettingsModalState, area_width: u16) -> 
                     }
                     SettingValue::String(s) => {
                         if s.is_empty() && matches!(meta.kind, SettingKind::DynamicEnum { .. }) {
-                            "(no override)".to_string()
+                            if meta.key == "default_model" {
+                                "Use OpenRouter Auto".to_string()
+                            } else {
+                                "(no override)".to_string()
+                            }
                         } else {
                             s.clone()
                         }
@@ -2339,7 +2347,11 @@ pub(super) fn render_setting_row(
         }
         SettingValue::String(s) => {
             if s.is_empty() && matches!(meta.kind, SettingKind::DynamicEnum { .. }) {
-                "(no override)"
+                if meta.key == "default_model" {
+                    "Use OpenRouter Auto"
+                } else {
+                    "(no override)"
+                }
             } else {
                 s.as_str()
             }

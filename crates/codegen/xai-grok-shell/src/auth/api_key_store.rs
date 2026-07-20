@@ -87,6 +87,7 @@ fn delete_with(store: &impl CredentialStore) -> Result<(), ApiKeyStoreError> {
 }
 
 pub fn load_api_key(grok_home: &std::path::Path) -> Result<Option<String>, ApiKeyStoreError> {
+    cache_key(None);
     let api_key = load_with(&SystemCredentialStore)?;
     if api_key.is_some() {
         super::storage::clear_api_key_strict(grok_home).map_err(ApiKeyStoreError::LegacyCleanup)?;
@@ -96,14 +97,15 @@ pub fn load_api_key(grok_home: &std::path::Path) -> Result<Option<String>, ApiKe
 }
 
 pub fn save_api_key(grok_home: &std::path::Path, api_key: &str) -> Result<(), ApiKeyStoreError> {
+    cache_key(None);
     save_with(&SystemCredentialStore, grok_home, api_key)?;
     cache_key(Some(api_key.to_owned()));
     Ok(())
 }
 
 pub fn delete_api_key() -> Result<(), ApiKeyStoreError> {
-    delete_with(&SystemCredentialStore)?;
     cache_key(None);
+    delete_with(&SystemCredentialStore)?;
     Ok(())
 }
 

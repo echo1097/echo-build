@@ -433,7 +433,11 @@ pub(super) fn handle_context_info_complete(
     info: Box<xai_grok_shell::session::SessionInfoResponse>,
 ) -> Vec<Effect> {
     if let Some(agent) = app.agents.get_mut(&agent_id) {
-        let model = info.data.model.as_deref().unwrap_or("unknown").to_string();
+        let model = agent
+            .session
+            .models
+            .current_model_detailed_label()
+            .unwrap_or_else(|| info.data.model.as_deref().unwrap_or("unknown").to_string());
         // Take ownership of the snapshot once, hand a clone to the
         // agent's running counters, then move the original into the
         // scrollback block (which keeps it for theme-reactive

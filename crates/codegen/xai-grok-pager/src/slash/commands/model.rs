@@ -156,11 +156,26 @@ fn build_model_items(models: &ModelState) -> Vec<ArgItem> {
     for (id, info) in &models.available {
         let is_current = current_id == Some(id);
         let supports = supports_reasoning_effort(info);
+        let meta = info.meta.as_ref();
+        let slug = meta
+            .and_then(|value| value.get("modelSlug"))
+            .and_then(|value| value.as_str())
+            .unwrap_or(id.0.as_ref());
+        let agent_capable = meta
+            .and_then(|value| value.get("agentCapable"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let context = meta
+            .and_then(|value| value.get("totalContextTokens"))
+            .and_then(|value| value.as_u64())
+            .map(format_context_window)
+            .unwrap_or_else(|| "unknown ctx".to_string());
+        let capability = if agent_capable { "Agent" } else { "Chat only" };
 
         let display = if is_current {
-            format!("{} (current)", info.name)
+            format!("{}  [{capability}]  {context}  (current)", info.name)
         } else {
-            info.name.clone()
+            format!("{}  [{capability}]  {context}", info.name)
         };
 
         // Trailing space on reasoning models: signals "more input
@@ -174,12 +189,22 @@ fn build_model_items(models: &ModelState) -> Vec<ArgItem> {
 
         items.push(ArgItem {
             display,
-            match_text: info.name.clone(),
+            match_text: format!("{} {slug}", info.name),
             insert_text,
-            description: info.description.clone().unwrap_or_default(),
+            description: match info.description.as_deref() {
+                Some(description) if !description.is_empty() => format!("{slug} · {description}"),
+                _ => slug.to_string(),
+            },
         });
     }
     items
+}
+
+fn format_context_window(tokens: u64) -> String {
+    format!(
+        "{} ctx",
+        crate::views::context_bar::fmt_context_window(tokens)
+    )
 }
 
 /// One row per effort level for the `/model` chained effort phase.
@@ -286,13 +311,51 @@ mod tests {
         // Enter so the effort sub-menu can render.
         let reasoning = items
             .iter()
-            .find(|i| i.match_text == "Reasoning X")
+            .find(|i| i.match_text.starts_with("Reasoning X "))
             .unwrap();
         assert_eq!(reasoning.insert_text, "Reasoning X ");
 
         // Plain model has no trailing space -- Enter commits immediately.
-        let plain = items.iter().find(|i| i.match_text == "Grok 4.5").unwrap();
+        let plain = items
+            .iter()
+            .find(|i| i.match_text.starts_with("Grok 4.5 "))
+            .unwrap();
         assert_eq!(plain.insert_text, "Grok 4.5");
+    }
+
+    #[test]
+    fn model_picker_formats_capabilities_slugs_and_context_windows() {
+        let mut state = ModelState::default();
+        for (slug, name, context, agent_capable) in [
+            ("provider/small", "Small", 8_192, false),
+            ("provider/medium", "Medium", 128_000, true),
+            ("provider/million", "Million", 1_000_000, true),
+        ] {
+            let id = acp::ModelId::new(Arc::from(slug));
+            let info = acp::ModelInfo::new(id.clone(), name.to_string()).meta(
+                serde_json::json!({
+                    "modelSlug": slug,
+                    "agentCapable": agent_capable,
+                    "totalContextTokens": context,
+                })
+                .as_object()
+                .cloned(),
+            );
+            state.available.insert(id, info);
+        }
+
+        let items = build_model_items(&state);
+        assert!(items[0].display.contains("[Chat only]"));
+        assert!(items[0].display.contains("8K ctx"));
+        assert!(items[0].match_text.contains("provider/small"));
+        assert!(items[1].display.contains("[Agent]"));
+        assert!(items[1].display.contains("128K ctx"));
+        assert!(items[2].display.contains("1M ctx"));
+    }
+
+    #[test]
+    fn model_picker_formats_kimi_context_as_256k() {
+        assert_eq!(format_context_window(262_144), "256K ctx");
     }
 
     #[test]

@@ -45,7 +45,7 @@ async fn two_sampling_clients_share_one_connection() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shared_client_keeps_per_config_headers_isolated() {
+async fn shared_client_keeps_auth_isolated_and_drops_legacy_headers() {
     pin_env();
     let (base_url, _accepts, heads) = spawn_counting_server().await;
     let mut cfg_a = test_config(&base_url, "token-a");
@@ -63,10 +63,10 @@ async fn shared_client_keeps_per_config_headers_isolated() {
 
     let heads = heads.lock().unwrap();
     assert_eq!(heads.len(), 2);
-    assert!(heads[0].contains("Bearer token-a") && heads[0].contains("isolated-a"));
-    assert!(!heads[0].contains("token-b") && !heads[0].contains("isolated-b"));
-    assert!(heads[1].contains("Bearer token-b") && heads[1].contains("isolated-b"));
-    assert!(!heads[1].contains("token-a") && !heads[1].contains("isolated-a"));
+    assert!(heads[0].contains("Bearer token-a"));
+    assert!(!heads[0].contains("token-b") && !heads[0].contains("isolated-a"));
+    assert!(heads[1].contains("Bearer token-b"));
+    assert!(!heads[1].contains("token-a") && !heads[1].contains("isolated-b"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

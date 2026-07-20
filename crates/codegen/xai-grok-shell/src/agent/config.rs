@@ -42,10 +42,11 @@ pub const DEFAULT_AGENT_TYPE: &str = "grok-build-plan";
 pub fn default_agent_type() -> String {
     DEFAULT_AGENT_TYPE.to_owned()
 }
-/// Default base URL for the cli chat proxy.
-pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "https://cli-chat-proxy.grok.com/v1";
-/// Default base URL for the public xAI API.
-pub const XAI_API_BASE_URL_DEFAULT: &str = "https://api.x.ai/v1";
+/// The only inference and catalog origin used by Echo Build.
+pub const OPENROUTER_API_BASE_URL: &str = "https://openrouter.ai/api/v1";
+/// Legacy names remain for config compatibility. Both resolve to OpenRouter.
+pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = OPENROUTER_API_BASE_URL;
+pub const XAI_API_BASE_URL_DEFAULT: &str = OPENROUTER_API_BASE_URL;
 /// Default base URL for the asset server (profile images, etc.).
 pub const ASSET_SERVER_URL_DEFAULT: &str = "https://assets.grok.com";
 /// One or more environment variable names that may hold a model API key.
@@ -311,7 +312,7 @@ impl EndpointsConfig {
     pub fn resolve_inference_base_url(&self) -> String {
         self.models_base_url
             .clone()
-            .unwrap_or_else(|| self.proxy_url())
+            .unwrap_or_else(|| self.xai_api_base_url.clone())
     }
     /// Feedback endpoint — an auxiliary service, so it defaults to the
     /// cli-chat-proxy, never `xai_api_base_url`.
@@ -542,8 +543,7 @@ impl Default for EndpointsConfig {
     fn default() -> Self {
         Self {
             cli_chat_proxy_base_url: std::env::var("GROK_CLI_CHAT_PROXY_BASE_URL").ok(),
-            xai_api_base_url: std::env::var("GROK_XAI_API_BASE_URL")
-                .unwrap_or_else(|_| XAI_API_BASE_URL_DEFAULT.to_owned()),
+            xai_api_base_url: XAI_API_BASE_URL_DEFAULT.to_owned(),
             alpha_test_key: None,
             models_base_url: env_string("GROK_MODELS_BASE_URL"),
             models_list_url: env_string("GROK_MODELS_LIST_URL"),
@@ -554,7 +554,7 @@ impl Default for EndpointsConfig {
             trace_upload_credentials_file: env_string("GROK_TRACE_UPLOAD_CREDENTIALS_FILE"),
             trace_upload_credentials: None,
             trace_upload_endpoint_url: env_string("GROK_TRACE_UPLOAD_ENDPOINT_URL"),
-            deployment_key: env_string("GROK_DEPLOYMENT_KEY"),
+            deployment_key: None,
             managed_config_url: env_string("GROK_MANAGED_CONFIG_URL"),
             otel_exporter_otlp_endpoint: env_string("OTEL_EXPORTER_OTLP_ENDPOINT"),
             otel_exporter_otlp_traces_endpoint: env_string("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
@@ -3403,8 +3403,9 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
             let config = ModelEntryConfig {
                 id: m.id,
                 model: m.model,
+                canonical_slug: None,
                 base_url: endpoints.resolve_inference_base_url(),
-                api_base_url: Some(endpoints.xai_api_base_url.clone()),
+                api_base_url: None,
                 name: m.name,
                 description: m.description,
                 context_window,
@@ -3427,6 +3428,10 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 reasoning_effort: m.reasoning_effort,
                 supports_reasoning_effort: m.supports_reasoning_effort,
                 reasoning_efforts: m.reasoning_efforts,
+                agent_capable: true,
+                input_modalities: vec!["text".to_string()],
+                supported_parameters: vec!["tools".to_string()],
+                reasoning_mandatory: false,
                 supports_backend_search: m.supports_backend_search,
                 compactions_remaining: m.compactions_remaining,
                 compaction_at_tokens: m.compaction_at_tokens,
@@ -3446,6 +3451,8 @@ pub struct ModelEntryConfig {
     pub id: Option<String>,
     /// The routing slug sent in API requests.
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_slug: Option<String>,
     /// The base URL of the model. e.g. "https://api.x.ai/v1"
     pub base_url: String,
     /// Human-readable display name of the model.
@@ -3482,6 +3489,14 @@ pub struct ModelEntryConfig {
     /// above are derived from this list when it is non-empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasoning_efforts: Vec<ReasoningEffortOption>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub agent_capable: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_modalities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_parameters: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reasoning_mandatory: bool,
     /// Extra headers to send with requests to this model's endpoint.
     /// Useful for BYOK (Bring Your Own Key) scenarios.
     /// Example: { "x-anthropic-api-key" = "sk-ant-..." }
@@ -3726,6 +3741,8 @@ pub struct ModelInfo {
     pub id: Option<String>,
     /// The routing slug sent in API requests.
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_slug: Option<String>,
     /// The base URL of the model (session endpoint). e.g. "https://cli-chat-proxy.grok.com/v1"
     pub base_url: String,
     /// Human-readable name of the model. Honored by both the picker
@@ -3772,6 +3789,14 @@ pub struct ModelInfo {
     /// Per-model reasoning-effort menu (source of truth); legacy fields derived from it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasoning_efforts: Vec<ReasoningEffortOption>,
+    #[serde(default)]
+    pub agent_capable: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_modalities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_parameters: Vec<String>,
+    #[serde(default)]
+    pub reasoning_mandatory: bool,
     pub supports_backend_search: bool,
     /// Per-model config for the `x-compactions-remaining` header; `None` disables it.
     pub compactions_remaining: Option<CompactionsRemaining>,
@@ -3795,6 +3820,7 @@ impl ModelInfo {
             user_selectable: true,
             id: None,
             model: slug.to_owned(),
+            canonical_slug: None,
             base_url: String::new(),
             name: None,
             description: None,
@@ -3816,6 +3842,10 @@ impl ModelInfo {
             reasoning_effort: None,
             supports_reasoning_effort: false,
             reasoning_efforts: Vec::new(),
+            agent_capable: false,
+            input_modalities: vec!["text".to_string()],
+            supported_parameters: Vec::new(),
+            reasoning_mandatory: false,
             supports_backend_search: false,
             compactions_remaining: None,
             compaction_at_tokens: None,
@@ -3830,6 +3860,7 @@ impl ModelInfo {
             user_selectable: true,
             id: entry.id.clone(),
             model: entry.model.clone(),
+            canonical_slug: entry.canonical_slug.clone(),
             base_url: entry.base_url.clone(),
             name: entry.name.clone(),
             description: entry.description.clone(),
@@ -3851,6 +3882,10 @@ impl ModelInfo {
             reasoning_effort: entry.reasoning_effort,
             supports_reasoning_effort: entry.supports_reasoning_effort,
             reasoning_efforts: entry.reasoning_efforts.clone(),
+            agent_capable: entry.agent_capable,
+            input_modalities: entry.input_modalities.clone(),
+            supported_parameters: entry.supported_parameters.clone(),
+            reasoning_mandatory: entry.reasoning_mandatory,
             supports_backend_search: entry.supports_backend_search,
             compactions_remaining: entry.compactions_remaining,
             compaction_at_tokens: entry.compaction_at_tokens,
@@ -4312,40 +4347,50 @@ pub(crate) fn first_own_credential(
 /// When `env_key` lists multiple names, the first set non-empty value is used.
 pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> ResolvedCredentials {
     let info = model.info();
-    let (api_key, base_url, auth_type) = if let Some(key) = model.own_credential() {
-        (
-            Some(key),
-            info.base_url.clone(),
-            xai_chat_state::AuthType::ApiKey,
-        )
-    } else if let Some(key) = session_key {
-        (
-            Some(key.to_owned()),
-            info.base_url.clone(),
-            xai_chat_state::AuthType::SessionToken,
-        )
-    } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
-        let url = model
-            .api_base_url
-            .clone()
-            .unwrap_or_else(|| info.base_url.clone());
-        (Some(key), url, xai_chat_state::AuthType::ApiKey)
-    } else {
-        if let Some(ref env_keys) = model.env_key
-            && !env_keys.is_empty()
-        {
-            tracing::warn!(
-                model = % info.model, env_key = % env_keys,
-                "model has env_key configured but none of the environment variables are set — \
-                 requests will have no API key",
-            );
-        }
-        (
-            None,
-            info.base_url.clone(),
-            xai_chat_state::AuthType::ApiKey,
-        )
-    };
+    #[cfg(test)]
+    let test_own_credential = model.own_credential();
+    #[cfg(not(test))]
+    let test_own_credential: Option<String> = None;
+    #[cfg(test)]
+    let test_session_key = session_key;
+    #[cfg(not(test))]
+    let test_session_key: Option<&str> = None;
+
+    let (api_key, base_url, auth_type) =
+        if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
+            let url = model
+                .api_base_url
+                .clone()
+                .unwrap_or_else(|| info.base_url.clone());
+            (Some(key), url, xai_chat_state::AuthType::ApiKey)
+        } else if let Some(key) = test_own_credential {
+            (
+                Some(key),
+                info.base_url.clone(),
+                xai_chat_state::AuthType::ApiKey,
+            )
+        } else if let Some(key) = test_session_key {
+            (
+                Some(key.to_owned()),
+                info.base_url.clone(),
+                xai_chat_state::AuthType::SessionToken,
+            )
+        } else {
+            if let Some(ref env_keys) = model.env_key
+                && !env_keys.is_empty()
+            {
+                tracing::warn!(
+                    model = % info.model, env_key = % env_keys,
+                    "model has env_key configured but none of the environment variables are set — \
+                     requests will have no API key",
+                );
+            }
+            (
+                None,
+                info.base_url.clone(),
+                xai_chat_state::AuthType::ApiKey,
+            )
+        };
     let auth_scheme = info.auth_scheme;
     tracing::debug!(
         model = % info.model, auth_type = ? auth_type, "resolved credentials"
@@ -4503,10 +4548,7 @@ pub fn resolve_aux_model_sampling_config(
             return Some(sampler);
         }
     }
-    let xai_bearer = session_key
-        .map(|s| s.to_owned())
-        .or_else(|| crate::agent::auth_method::read_xai_api_key_env().ok())
-        .or_else(|| endpoints.deployment_key.clone());
+    let xai_bearer = crate::agent::auth_method::read_xai_api_key_env().ok();
     if let Some(bearer) = xai_bearer {
         let entry = ModelEntry {
             info: ModelInfo {
@@ -4515,13 +4557,14 @@ pub fn resolve_aux_model_sampling_config(
                 model: catalog_entry
                     .map(|e| e.info.model)
                     .unwrap_or_else(|| model_id.to_owned()),
+                canonical_slug: None,
                 base_url: endpoints.resolve_inference_base_url(),
                 name: None,
                 description: None,
                 max_completion_tokens: None,
                 temperature: None,
                 top_p: None,
-                api_backend: ApiBackend::Responses,
+                api_backend: ApiBackend::ChatCompletions,
                 auth_scheme: Default::default(),
                 extra_headers: IndexMap::new(),
                 context_window: NonZeroU64::new(200_000).unwrap(),
@@ -4536,6 +4579,10 @@ pub fn resolve_aux_model_sampling_config(
                 reasoning_effort: None,
                 supports_reasoning_effort: false,
                 reasoning_efforts: Vec::new(),
+                agent_capable: false,
+                input_modalities: vec!["text".to_string()],
+                supported_parameters: Vec::new(),
+                reasoning_mandatory: false,
                 supports_backend_search: false,
                 compactions_remaining: None,
                 compaction_at_tokens: None,
@@ -4635,13 +4682,9 @@ pub fn sampling_config_for_model(
     let max_completion_tokens = info.max_completion_tokens;
     let temperature = info.temperature;
     let top_p = info.top_p;
-    let mut extra_headers = info.extra_headers.clone();
-    inject_url_derived_headers(
-        &mut extra_headers,
-        alpha_test_key.as_deref(),
-        &credentials.base_url,
-    );
-    let api_backend = info.api_backend.clone();
+    let _ = alpha_test_key;
+    let extra_headers = IndexMap::new();
+    let api_backend = ApiBackend::ChatCompletions;
     SamplerConfig {
         api_key: credentials.api_key,
         model: model_name,
@@ -4650,7 +4693,7 @@ pub fn sampling_config_for_model(
         temperature,
         top_p,
         api_backend,
-        auth_scheme: credentials.auth_scheme,
+        auth_scheme: AuthScheme::Bearer,
         extra_headers,
         context_window: info.context_window.get(),
         client_version,
@@ -4665,9 +4708,9 @@ pub fn sampling_config_for_model(
         origin_client: None,
         attribution_callback: None,
         bearer_resolver: None,
-        supports_backend_search: info.supports_backend_search,
-        compactions_remaining: info.compactions_remaining,
-        compaction_at_tokens: info.compaction_at_tokens,
+        supports_backend_search: false,
+        compactions_remaining: None,
+        compaction_at_tokens: None,
         doom_loop_recovery: None,
         header_injector: None,
     }
@@ -4737,13 +4780,14 @@ fn resolve_hidden_default_web_search_sampling_config(
         info: ModelInfo {
             id: None,
             model: model_id.to_owned(),
+            canonical_slug: None,
             base_url: endpoints.resolve_inference_base_url(),
             name: None,
             description: None,
             max_completion_tokens: None,
             temperature: None,
             top_p: None,
-            api_backend: ApiBackend::Responses,
+            api_backend: ApiBackend::ChatCompletions,
             auth_scheme: Default::default(),
             extra_headers: IndexMap::new(),
             context_window: NonZeroU64::new(200_000).unwrap(),
@@ -4759,6 +4803,10 @@ fn resolve_hidden_default_web_search_sampling_config(
             reasoning_effort: None,
             supports_reasoning_effort: false,
             reasoning_efforts: Vec::new(),
+            agent_capable: false,
+            input_modalities: vec!["text".to_string()],
+            supported_parameters: Vec::new(),
+            reasoning_mandatory: false,
             supports_backend_search: false,
             compactions_remaining: None,
             compaction_at_tokens: None,
@@ -4838,6 +4886,34 @@ pub fn to_acp_model_info(
                     "agentType".to_string(),
                     serde_json::Value::String(info.agent_type.clone()),
                 );
+                map.insert("provider".to_string(), serde_json::json!("openrouter"));
+                map.insert("modelSlug".to_string(), serde_json::json!(info.model));
+                map.insert(
+                    "canonicalSlug".to_string(),
+                    serde_json::json!(info.canonical_slug),
+                );
+                map.insert(
+                    "agentCapable".to_string(),
+                    serde_json::json!(info.agent_capable),
+                );
+                map.insert(
+                    "inputModalities".to_string(),
+                    serde_json::json!(info.input_modalities),
+                );
+                map.insert(
+                    "supportedParameters".to_string(),
+                    serde_json::json!(info.supported_parameters),
+                );
+                map.insert(
+                    "reasoningMandatory".to_string(),
+                    serde_json::json!(info.reasoning_mandatory),
+                );
+                if let Some(max_tokens) = info.max_completion_tokens {
+                    map.insert(
+                        "maxCompletionTokens".to_string(),
+                        serde_json::json!(max_tokens),
+                    );
+                }
                 if info.supports_reasoning_effort {
                     map.insert(
                         "supportsReasoningEffort".to_string(),
@@ -5391,9 +5467,14 @@ reasoning_effort = "low"
                 user_selectable: true,
                 id: None,
                 model: model.to_string(),
+                canonical_slug: None,
                 base_url: base_url.to_string(),
                 name: None,
                 description: None,
+                agent_capable: true,
+                input_modalities: vec!["text".to_string()],
+                supported_parameters: vec!["tools".to_string()],
+                reasoning_mandatory: false,
                 max_completion_tokens: None,
                 temperature: None,
                 top_p: None,
@@ -6409,9 +6490,14 @@ reasoning_effort = "low"
         let entry = ModelEntryConfig {
             id: None,
             model: "test".to_string(),
+            canonical_slug: None,
             base_url: "https://test.api/v1".to_string(),
             name: None,
             description: None,
+            agent_capable: true,
+            input_modalities: vec!["text".to_string()],
+            supported_parameters: vec!["tools".to_string()],
+            reasoning_mandatory: false,
             max_completion_tokens: None,
             temperature: None,
             top_p: None,
@@ -6568,9 +6654,14 @@ reasoning_effort = "low"
         let entry = ModelEntryConfig {
             id: None,
             model: "test".to_string(),
+            canonical_slug: None,
             base_url: "https://test.api/v1".to_string(),
             name: None,
             description: None,
+            agent_capable: true,
+            input_modalities: vec!["text".to_string()],
+            supported_parameters: vec!["tools".to_string()],
+            reasoning_mandatory: false,
             max_completion_tokens: None,
             temperature: None,
             top_p: None,
@@ -6607,6 +6698,7 @@ reasoning_effort = "low"
         let mut models = IndexMap::new();
         let mut entry = test_model_entry("test-model", "https://test.api/v1", None, None, None);
         entry.info.name = Some("Test Model".to_string());
+        entry.info.canonical_slug = Some("provider/test-canonical".to_string());
         entry.info.context_window = NonZeroU64::new(256_000).unwrap();
         entry.info.agent_type = "codex".to_string();
         models.insert("test-model".to_string(), entry);
@@ -6615,6 +6707,13 @@ reasoning_effort = "low"
         let meta = acp_model.meta.as_ref().expect("meta should be present");
         assert_eq!(meta["agentType"], "codex");
         assert_eq!(meta["totalContextTokens"], 256_000);
+        assert_eq!(meta["provider"], "openrouter");
+        assert_eq!(meta["modelSlug"], "test-model");
+        assert_eq!(meta["canonicalSlug"], "provider/test-canonical");
+        assert_eq!(meta["agentCapable"], true);
+        assert_eq!(meta["inputModalities"], serde_json::json!(["text"]));
+        assert_eq!(meta["supportedParameters"], serde_json::json!(["tools"]));
+        assert_eq!(meta["reasoningMandatory"], false);
     }
     #[test]
     fn acp_model_meta_always_includes_agent_type() {
@@ -7019,9 +7118,14 @@ reasoning_effort = "low"
         let entry = ModelEntryConfig {
             id: None,
             model: "test".to_string(),
+            canonical_slug: None,
             base_url: "https://test.api/v1".to_string(),
             name: None,
             description: None,
+            agent_capable: true,
+            input_modalities: vec!["text".to_string()],
+            supported_parameters: vec!["tools".to_string()],
+            reasoning_mandatory: false,
             max_completion_tokens: None,
             temperature: None,
             top_p: None,
@@ -10578,9 +10682,14 @@ default = "grok-4.5"
                 user_selectable: true,
                 id: None,
                 model: slug.to_owned(),
+                canonical_slug: None,
                 base_url: "https://test.example.com/v1".to_owned(),
                 name: Some(slug.to_owned()),
                 description: None,
+                agent_capable: true,
+                input_modalities: vec!["text".to_string()],
+                supported_parameters: vec!["tools".to_string()],
+                reasoning_mandatory: false,
                 max_completion_tokens: None,
                 temperature: None,
                 top_p: None,

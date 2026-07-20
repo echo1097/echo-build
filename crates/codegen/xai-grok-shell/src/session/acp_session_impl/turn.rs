@@ -1807,7 +1807,13 @@ impl SessionActor {
             jsonschema::validator_for(schema).map_err(|e| format!("invalid output schema: {e}"))
         });
         let schema_ok = matches!(structured_output_validator, Some(Ok(_)));
-        let native_backend = if json_schema.is_some() {
+        let catalog_supports_native_schema = self
+            .models_manager
+            .current_model_supports_parameter("structured_outputs")
+            || self
+                .models_manager
+                .current_model_supports_parameter("response_format");
+        let native_backend = if json_schema.is_some() && catalog_supports_native_schema {
             match self.chat_state_handle.get_sampling_config().await {
                 Some(c) => c.api_backend.supports_native_schema(),
                 None => {
@@ -1821,7 +1827,8 @@ impl SessionActor {
             false
         };
         let structured_output_native = schema_ok && native_backend;
-        let structured_output_tool = schema_ok && !native_backend;
+        let structured_output_tool =
+            schema_ok && !native_backend && self.models_manager.current_model_agent_capable();
         if structured_output_tool {
             self.push_system_reminder(
                 "A response schema is required. After any tool use, call the \

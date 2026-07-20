@@ -414,6 +414,34 @@
         );
     }
 
+    #[test]
+    fn model_changed_rebases_context_total_to_selected_model() {
+        let mut app = make_app_with_agent("sess-1");
+        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+        seed_models(agent, "openrouter/auto", &["openrouter/auto", "moonshotai/kimi-k2.7-code"]);
+        agent.session.models.available.get_mut(
+            &acp::ModelId::new(std::sync::Arc::from("openrouter/auto")),
+        ).unwrap().meta = serde_json::json!({ "totalContextTokens": 2_000_000 })
+            .as_object()
+            .cloned();
+        agent.session.models.available.get_mut(
+            &acp::ModelId::new(std::sync::Arc::from("moonshotai/kimi-k2.7-code")),
+        ).unwrap().meta = serde_json::json!({ "totalContextTokens": 262_144 })
+            .as_object()
+            .cloned();
+        agent.context_state = Some(xai_grok_shell::session::ContextInfo::from_notification(
+            12_000,
+            2_000_000,
+        ));
+
+        let notif = model_changed_ext("sess-1", "moonshotai/kimi-k2.7-code", None);
+        assert!(handle_ext_notification(&notif, &mut app));
+
+        let snapshot = app.agents[&AgentId(0)].context_state.as_ref().unwrap();
+        assert_eq!(snapshot.total, 262_144);
+        assert_eq!(snapshot.free_tokens, 250_144);
+    }
+
     /// `ModelChanged` for a session this client doesn't own / hasn't loaded
     /// must be dropped — `find_session_match` returns `None`. The bug-flavored
     /// version of this would be: leader-mode A switches model on session X
@@ -441,4 +469,3 @@
             "unrelated-session broadcast must not touch this agent's model"
         );
     }
-

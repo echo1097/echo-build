@@ -68,11 +68,24 @@ pub(super) fn credit_limit_upsell_mode(
 
 /// Whether an API / retry error is a credit-limit / spend-block denial.
 ///
-/// - **402** Payment Required — always credit/spend block on this surface
-///   (Build pool and IC spend blocks); no message filter.
+/// OpenRouter API-key errors are excluded because its provider-managed billing
+/// must never open the legacy Grok purchase flow. For legacy auth:
+///
+/// - **402** Payment Required — credit/spend block (Build pool and IC spend
+///   blocks); no message filter.
 /// - **403** — only when the body contains "run out of credits" (legacy IC
 ///   spend wording); other 403s (content-safety, ZDR, …) are excluded.
-pub(crate) fn is_credit_limit_error(http_status: Option<u16>, message: &str) -> bool {
+pub(crate) fn is_credit_limit_error(
+    http_status: Option<u16>,
+    message: &str,
+    is_api_key_auth: bool,
+) -> bool {
+    // OpenRouter owns its billing errors. Sending those through this legacy
+    // Grok path turns a normal 402 into a fake weekly limit and a grok.com link.
+    if is_api_key_auth {
+        return false;
+    }
+
     let m = message.to_ascii_lowercase();
     let legacy = m.contains("run out of credits");
     match http_status {
@@ -99,14 +112,7 @@ pub(super) fn open_credit_limit_upsell(
 ) {
     use crate::scrollback::blocks::CreditLimitCardAction;
 
-    let (
-        heading,
-        secondary_label,
-        secondary_desc,
-        card_action,
-        second_choice,
-        payg_telemetry,
-    ): (
+    let (heading, secondary_label, secondary_desc, card_action, second_choice, payg_telemetry): (
         &str,
         &str,
         &str,

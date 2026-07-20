@@ -790,10 +790,6 @@ pub(in crate::app::dispatch) fn skip_picker_and_create_session(
         model_id: None,
         preferred_session_id,
         chat_kind,
-        
-        
-        
-        
     }]
 }
 pub(in crate::app::dispatch) fn handle_session_created(
@@ -1066,6 +1062,7 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                 let prev_model = agent.session.models.current.clone();
                 let prev_effort = agent.session.models.reasoning_effort;
                 agent.session.models.set_current(model_id.clone(), effort);
+                agent.sync_context_window_to_model();
                 let resolved_effort = agent.session.models.reasoning_effort;
                 let unchanged =
                     prev_model.as_ref() == Some(&model_id) && prev_effort == resolved_effort;
@@ -1076,6 +1073,12 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                         format!("Switched to {display_name}")
                     };
                     agent.scrollback.push_block(RenderBlock::system(msg));
+                    if !agent.session.models.current_model_agent_capable() {
+                        agent.scrollback.push_block(RenderBlock::system(
+                            "Chat only: this model does not advertise tool support, so coding tools are disabled."
+                                .to_string(),
+                        ));
+                    }
                 }
                 if unchanged {
                     vec![]

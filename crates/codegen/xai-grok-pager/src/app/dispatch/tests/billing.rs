@@ -306,24 +306,42 @@ fn credit_limit_upsell_mode_prefers_unified_flag() {
 fn is_credit_limit_error_matches_legacy_403_and_pool_402() {
     assert!(is_credit_limit_error(
         Some(403),
-        "status 403: run out of credits"
+        "status 403: run out of credits",
+        false,
     ));
     // 402 Payment Required is always credit/spend on this surface.
-    assert!(is_credit_limit_error(Some(402), "anything"));
+    assert!(is_credit_limit_error(Some(402), "anything", false));
     assert!(is_credit_limit_error(
         None,
-        "API error (status 402 Payment Required): Grok Build usage balance exhausted"
+        "API error (status 402 Payment Required): Grok Build usage balance exhausted",
+        false,
     ));
     assert!(is_credit_limit_error(
         None,
-        "status 403: run out of credits"
+        "status 403: run out of credits",
+        false,
     ));
-    assert!(!is_credit_limit_error(Some(403), "content safety blocked"));
-    assert!(!is_credit_limit_error(Some(500), "internal server error"));
+    assert!(!is_credit_limit_error(
+        Some(403),
+        "content safety blocked",
+        false,
+    ));
+    assert!(!is_credit_limit_error(
+        Some(500),
+        "internal server error",
+        false,
+    ));
     // Pool phrases alone without 402/403 status do not match.
     assert!(!is_credit_limit_error(
         None,
-        "usage balance exhausted without status"
+        "usage balance exhausted without status",
+        false,
+    ));
+
+    assert!(!is_credit_limit_error(
+        Some(402),
+        "This account has insufficient OpenRouter credits",
+        true,
     ));
 }
 

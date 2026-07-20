@@ -20,6 +20,66 @@ pub(super) fn dispatch_logout(_app: &mut AppView) -> Vec<Effect> {
     vec![Effect::Logout]
 }
 
+/// `/auth` -- show the current API-key status without ever reading the secret.
+pub(super) fn dispatch_show_auth_management(app: &mut AppView) -> Vec<Effect> {
+    use crate::views::question_view::{LocalQuestionKind, QuestionViewState};
+    use xai_grok_tools::implementations::grok_build::ask_user_question::{
+        Question, QuestionOption,
+    };
+
+    let configured = app.is_api_key_auth;
+    let Some(agent) = super::ctx::get_active_agent_mut(app) else {
+        return vec![];
+    };
+    if agent.question_view.is_some() {
+        agent.show_toast("Close the current question before opening /auth");
+        return vec![];
+    }
+
+    let mut options = vec![QuestionOption {
+        label: if configured {
+            "Update API key".into()
+        } else {
+            "Add API key".into()
+        },
+        description: "Open secure API-key entry.".into(),
+        preview: None,
+        id: None,
+    }];
+    if configured {
+        options.push(QuestionOption {
+            label: "Clear API key and log out".into(),
+            description: "Remove the key from the operating system credential store.".into(),
+            preview: None,
+            id: None,
+        });
+    }
+
+    let status = if configured {
+        "OpenRouter API key configured"
+    } else {
+        "No OpenRouter API key configured"
+    };
+    let question = Question {
+        question: status.into(),
+        options,
+        multi_select: Some(false),
+        id: None,
+    };
+
+    let state = QuestionViewState::new(
+        format!("auth-management-{}", uuid::Uuid::new_v4()),
+        vec![question],
+        agent.prompt.stash(),
+    )
+    .with_local_kind(LocalQuestionKind::AuthManagement { configured })
+    .with_no_freeform();
+    agent.question_view = Some(state);
+    agent.prompt.set_text("");
+
+    vec![]
+}
+
 /// Ensure `login_method_id` is populated from stored auth methods.
 /// On the eager-auth path (cached token), login_method_id is never set
 /// because the user skipped the login screen.

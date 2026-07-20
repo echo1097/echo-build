@@ -3,8 +3,6 @@
 //! `/plan` enters plan mode. `/plan <description>` enters plan mode and starts
 //! a turn with the description after the mode switch completes.
 //!
-//! Use `/view-plan` to open the current saved plan preview.
-
 use crate::app::actions::{Action, PlanModeKind};
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 

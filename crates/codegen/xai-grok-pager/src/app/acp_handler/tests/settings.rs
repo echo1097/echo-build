@@ -29,8 +29,7 @@
     }
 
     #[test]
-    fn settings_api_key_keeps_voice_despite_remote_false() {
-        // Remote false alone must not disable an already API-key session.
+    fn settings_api_key_keeps_xai_voice_disabled() {
         let mut app = make_app_with_agent("sess-api-key");
         app.is_api_key_auth = true;
         app.apply_voice_mode_enabled(true);
@@ -39,8 +38,8 @@
             &voice_settings_update(false),
             &mut app
         ));
-        assert!(app.voice_mode_enabled);
-        assert!(app.voice_ui_active);
+        assert!(!app.voice_mode_enabled);
+        assert!(!app.voice_ui_active);
 
         // Same update can stamp API Key while remote settings sends voice false.
         let mut app = make_app_with_agent("sess-combined");
@@ -56,7 +55,7 @@
         );
         assert!(handle_ext_notification(&notif, &mut app));
         assert!(app.is_api_key_auth);
-        assert!(app.voice_mode_enabled);
+        assert!(!app.voice_mode_enabled);
         assert!(app.tier_restricted_commands.is_empty());
     }
 
@@ -70,7 +69,7 @@
         assert!(app.is_api_key_auth);
         assert!(!app.usage_visible);
         assert!(app.tier_restricted_commands.is_empty());
-        assert!(app.voice_mode_enabled);
+        assert!(!app.voice_mode_enabled);
 
         // Later personal Free stamp must not keep API-key bypass or force-on voice.
         assert!(handle_ext_notification(
@@ -88,18 +87,18 @@
             &tier_settings_update("API Key"),
             &mut app
         ));
-        assert!(app.voice_mode_enabled);
+        assert!(!app.voice_mode_enabled);
         assert!(handle_ext_notification(
             &tier_settings_update("SuperGrok"),
             &mut app
         ));
         assert!(!app.is_api_key_auth);
-        assert!(app.voice_mode_enabled);
+        assert!(!app.voice_mode_enabled);
         assert!(app.tier_restricted_commands.is_empty());
     }
 
     #[test]
-    fn voice_remote_true_re_enables_after_kill_switch() {
+    fn voice_remote_true_cannot_enable_xai_voice() {
         let mut app = make_app_with_agent("sess-1");
         app.apply_voice_mode_enabled(false);
         assert!(!app.voice_mode_enabled);
@@ -107,10 +106,7 @@
         let affected = handle_ext_notification(&voice_settings_update(true), &mut app);
 
         assert!(affected);
-        assert!(
-            app.voice_mode_enabled,
-            "remote true lifts the kill switch (env unset)"
-        );
+        assert!(!app.voice_mode_enabled);
     }
 
     #[test]

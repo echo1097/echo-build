@@ -315,6 +315,10 @@ struct ErrorBody {
     message: Option<String>,
     #[serde(rename = "type")]
     kind: Option<String>,
+    #[serde(default)]
+    code: Option<serde_json::Value>,
+    #[serde(default)]
+    metadata: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Flat error from the Grok proxy/gateway: `{"code": "...", "error": "..."}`.
@@ -328,8 +332,18 @@ struct FlatErrorResponse {
 /// Extract `(error_type, message)` from either error format.
 fn try_parse_error(data: &str) -> Option<(String, String)> {
     if let Ok(resp) = serde_json::from_str::<ErrorResponse>(data) {
+        let error_type = resp
+            .error
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("error_type"))
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+            .or(resp.error.kind)
+            .or_else(|| resp.error.code.map(|value| value.to_string()))
+            .unwrap_or_else(|| "unknown".to_string());
         return Some((
-            resp.error.kind.unwrap_or_else(|| "unknown".to_string()),
+            error_type,
             resp.error
                 .message
                 .unwrap_or_else(|| "unknown error".to_string()),
@@ -353,13 +367,19 @@ pub const MAX_USER_ERROR_BODY_CHARS: usize = 280;
 /// sniff body text — only the HTTP status drives this fallback.
 pub fn status_user_message(status: StatusCode) -> String {
     match status.as_u16() {
+        401 => "OpenRouter rejected the API key. Update it in the secure credential store.".into(),
+        402 => "OpenRouter credits are insufficient for this request.".into(),
+        403 => "OpenRouter blocked this request because of permissions or a guardrail.".into(),
+        429 => "OpenRouter is rate limiting requests. Please retry shortly.".into(),
         code @ 502..=504 => {
-            format!("Grok is temporarily unavailable. Please try again in a moment. (HTTP {code}).")
+            format!(
+                "OpenRouter or the selected provider is temporarily unavailable. (HTTP {code})."
+            )
         }
         // Cloudflare edge codes (origin down / connect fail / timeout / …).
         code @ 520..=524 => {
             format!(
-                "Connection to Grok timed out or was interrupted. Please try again. (HTTP {code})."
+                "The OpenRouter connection timed out or was interrupted. Please try again. (HTTP {code})."
             )
         }
         code if status.is_server_error() => {
@@ -413,7 +433,7 @@ pub fn user_facing_api_error_message(status: StatusCode, bytes: &[u8]) -> String
 
 pub fn try_parse_stream_error(data: &str) -> Option<SamplingError> {
     let (error_type, message) = try_parse_error(data)?;
-    tracing::warn!(error_type, message, "Server-side stream error");
+    tracing::warn!(error_type, "OpenRouter stream error");
     Some(SamplingError::StreamError {
         error_type,
         message,
@@ -560,6 +580,29 @@ mod tests {
                     message,
                     "Service temporarily unavailable. The model did not respond to this request."
                 );
+            }
+            other => panic!("expected StreamError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn openrouter_metadata_error_type_takes_precedence() {
+        let data = r#"{
+            "error": {
+                "code": 502,
+                "type": "server_error",
+                "message": "upstream provider failed",
+                "metadata": { "error_type": "provider_unavailable" }
+            }
+        }"#;
+        let error = try_parse_stream_error(data).expect("OpenRouter error should parse");
+        match error {
+            SamplingError::StreamError {
+                error_type,
+                message,
+            } => {
+                assert_eq!(error_type, "provider_unavailable");
+                assert_eq!(message, "upstream provider failed");
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
