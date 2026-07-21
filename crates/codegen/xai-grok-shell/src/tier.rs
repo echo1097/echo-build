@@ -9,7 +9,7 @@
 //! drift apart.
 //!
 //! "Restricted" tiers are the personal free tier and X Basic — the tiers the
-//! server zero-limits on the Imagine and voice endpoints. Everything else
+//! server zero-limits on the voice endpoint. Everything else
 //! (SuperGrok, SuperGrok Heavy/Lite, X Premium/+, and any unknown future name)
 //! is unrestricted (**fail-open**).
 

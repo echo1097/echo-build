@@ -68,7 +68,7 @@ impl AgentView {
             PromptEvent::Ignored => (InputOutcome::Changed, ClipboardTextInsertion::Failed),
         }
     }
-    fn reject_shared_queue_image_edit(
+    fn reject_shared_queue_image_attachment(
         &mut self,
         pasted: &crate::prompt_images::PastedImage,
     ) -> bool {
@@ -160,7 +160,7 @@ impl AgentView {
         );
         let attachment = match image {
             ProbedAttachment::Image(pasted) => {
-                if self.reject_shared_queue_image_edit(&pasted) {
+                if self.reject_shared_queue_image_attachment(&pasted) {
                     return ClipboardPasteCompletion::Failed(
                         ClipboardPasteFailure::AlreadyReported,
                     );
@@ -411,7 +411,7 @@ impl AgentView {
         &mut self,
         mut pasted: crate::prompt_images::PastedImage,
     ) -> bool {
-        if self.reject_shared_queue_image_edit(&pasted) {
+        if self.reject_shared_queue_image_attachment(&pasted) {
             return false;
         }
         let preparation = pasted.preview_preparation();

@@ -392,7 +392,7 @@ pub(super) fn dispatch_send_prompt_inner(
     let mut effects = Vec::new();
 
     // ── Tier-restricted command upsell ─────────────────────────────
-    // Restricted commands (`/usage`, `/imagine`, …) are hidden from the
+    // Restricted commands (`/usage`, …) are hidden from the
     // registry's `get()`, so a typed invocation would otherwise fall
     // through the unknown-command path below and leak to the model as a
     // raw prompt. Upsell instead; genuinely unknown commands still pass

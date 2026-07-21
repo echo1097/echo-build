@@ -767,10 +767,10 @@ impl AvailableSkills {
 #[derive(Debug, Clone)]
 pub struct SessionFolder(pub PathBuf);
 /// Per-turn registry mapping each attached image's `[Image #N]` display
-/// number to a reference `image_edit` can resolve.
+/// number to a reference `attached-image` can resolve.
 ///
 /// The model sees attachments inline (as pixels) and only the `[Image #N]`
-/// token in text — never a path — so this lets `image_edit` resolve that
+/// token in text — never a path — so this lets `attached-image` resolve that
 /// token instead of fabricating a filesystem path it can't know.
 ///
 /// Keyed by display **number**, not list position: numbers are not

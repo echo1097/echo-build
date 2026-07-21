@@ -1691,10 +1691,10 @@ fn dashboard_slash_model_stages_pending_model() {
 #[test]
 fn dashboard_slash_restricted_command_reports_unavailable_without_upsell() {
     let mut app = test_app();
-    app.tier_restricted_commands = vec!["imagine".to_string()];
+    app.tier_restricted_commands = vec!["usage".to_string()];
     open_dashboard(&mut app);
 
-    let effects = dispatch_dashboard_dispatch_slash(&mut app, "/imagine a sunset".into());
+    let effects = dispatch_dashboard_dispatch_slash(&mut app, "/usage ".into());
 
     assert!(effects.is_empty(), "restricted command must not dispatch");
     assert!(
@@ -1709,7 +1709,7 @@ fn dashboard_slash_restricted_command_reports_unavailable_without_upsell() {
         .as_deref()
         .expect("restricted command must set an unavailable toast");
     assert!(
-        toast.contains("/imagine") && toast.contains("not available") && !toast.contains("Grok"),
+        toast.contains("/usage") && toast.contains("not available") && !toast.contains("Grok"),
         "toast must not carry a Grok upsell: {toast}"
     );
 }

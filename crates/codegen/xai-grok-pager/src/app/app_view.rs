@@ -558,13 +558,10 @@ fn parse_esc_ttl(raw: Option<String>) -> Duration {
 ///
 /// Current set:
 /// - `usage` — coding credit / billing UI (alias: `/cost`)
-/// - `imagine` — image generation entry point
-/// - `imagine-video` — video generation entry point
 /// - `voice` — voice dictation entry point (the Ctrl+Space / F8 keybinding is
 ///   gated separately in [`crate::app::dispatch::voice`], since it bypasses the
 ///   slash registry)
-pub(crate) const TIER_RESTRICTED_COMMANDS: &[&str] =
-    &["usage", "imagine", "imagine-video", "voice"];
+pub(crate) const TIER_RESTRICTED_COMMANDS: &[&str] = &["usage", "voice"];
 /// Whether a subscription-tier display name is a tier with restricted
 /// commands: the free tier (no subscription ⇒ `None`, or an explicit
 /// "Free") and X Basic (CCP display name "X Basic"; JWT claim fallback
@@ -6591,7 +6588,7 @@ pub(crate) mod tests {
     #[test]
     fn apply_auth_meta_api_key_keeps_xai_voice_disabled_and_skips_tier_gate() {
         let mut app = test_app();
-        advertise_media_tools(&mut app);
+        advertise_restricted_commands(&mut app);
         assert!(!app.voice_mode_enabled);
         app.apply_auth_meta(&xai_grok_shell::auth::AuthMeta {
             auth_mode: Some("ApiKey".into()),
@@ -6631,22 +6628,11 @@ pub(crate) mod tests {
     /// Make every tier-restricted command visible on the welcome prompt so the
     /// present/absent assertions exercise the deny list, not incidental
     /// fail-closed hiding:
-    /// - `/imagine`, `/imagine-video` are `required_tools()`-gated, so advertise
-    ///   their tools (otherwise the registry fail-closes them).
-    /// - `/voice` is fail-closed hidden until the remote flag turns it on, so
+    /// `/voice` is fail-closed hidden until the remote flag turns it on, so
     ///   reveal it via the registry directly. (We drive the prompt's registry
     ///   rather than `apply_voice_mode_enabled`, which also flips a process-global
     ///   atomic and would leak across parallel tests.)
-    fn advertise_media_tools(app: &mut AppView) {
-        app.welcome_prompt
-            .slash_controller
-            .registry_mut()
-            .set_available_tools(
-                ["image_gen", "image_to_video"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
-            );
+    fn advertise_restricted_commands(app: &mut AppView) {
         app.welcome_prompt.set_voice_visible(true);
     }
     fn assert_tier_restricted_commands_absent(app: &AppView) {
@@ -6671,7 +6657,7 @@ pub(crate) mod tests {
     #[test]
     fn apply_auth_meta_restricts_usage_for_free_tier() {
         let mut app = test_app();
-        advertise_media_tools(&mut app);
+        advertise_restricted_commands(&mut app);
         app.apply_auth_meta(&xai_grok_shell::auth::AuthMeta::default());
         assert_eq!(
             app.tier_restricted_commands,
@@ -6683,7 +6669,7 @@ pub(crate) mod tests {
     #[test]
     fn apply_auth_meta_restricts_usage_for_x_basic_tier() {
         let mut app = test_app();
-        advertise_media_tools(&mut app);
+        advertise_restricted_commands(&mut app);
         let meta = xai_grok_shell::auth::AuthMeta {
             subscription_tier: Some("X Basic".into()),
             ..Default::default()
@@ -6698,7 +6684,7 @@ pub(crate) mod tests {
     #[test]
     fn apply_auth_meta_lifts_restrictions_for_paid_tiers_and_teams() {
         let mut app = test_app();
-        advertise_media_tools(&mut app);
+        advertise_restricted_commands(&mut app);
         let meta = xai_grok_shell::auth::AuthMeta {
             subscription_tier: Some("SuperGrok".into()),
             ..Default::default()
@@ -6707,7 +6693,7 @@ pub(crate) mod tests {
         assert!(app.tier_restricted_commands.is_empty());
         assert_tier_restricted_commands_present(&app);
         let mut app = test_app();
-        advertise_media_tools(&mut app);
+        advertise_restricted_commands(&mut app);
         app.apply_auth_meta(&xai_grok_shell::auth::AuthMeta::default());
         assert!(!app.tier_restricted_commands.is_empty());
         app.subscription_tier = Some("SuperGrok".into());

@@ -108,7 +108,7 @@ pub fn display_number_from_meta(meta: Option<&agent_client_protocol::Meta>) -> O
 ///
 /// The display number comes from each block's `_meta` (set by the TUI),
 /// falling back to 1-based position for callers that don't record it. The
-/// reference is one `image_edit`'s resolver can read directly: the bare
+/// reference is one `attached-image`'s resolver can read directly: the bare
 /// durable path (from the `file://` URI) when present, else a
 /// `data:<mime>;base64,<data>` URL.
 pub fn attached_image_references(
@@ -1194,7 +1194,7 @@ mod tests {
         assert!(!raw[0].data.is_empty());
         assert!(raw[0].uri.as_deref().unwrap().starts_with("file://"));
         // The recovered image carries its real `[Image #N]` number so
-        // `image_edit` can resolve the token to it by number.
+        // `attached-image` can resolve the token to it by number.
         assert_eq!(display_number_from_meta(raw[0].meta.as_ref()), Some(1));
     }
 
@@ -1463,7 +1463,7 @@ mod tests {
 
     #[test]
     fn attached_image_references_prefers_file_path_over_data() {
-        // `[Image #N]` resolution should hand `image_edit` a bare on-disk
+        // `[Image #N]` resolution should hand `attached-image` a bare on-disk
         // path (from the durable `file://` URI) so it reads the session
         // copy rather than re-decoding a large base64 blob.
         let img = agent_client_protocol::ImageContent::new("AAAA", "image/png")

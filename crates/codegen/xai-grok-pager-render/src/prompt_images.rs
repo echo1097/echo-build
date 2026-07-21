@@ -1883,7 +1883,7 @@ impl ScrollbackVideoRef {
 pub fn extract_video_refs(text: &str) -> Vec<ScrollbackVideoRef> {
     use std::sync::LazyLock;
 
-    // Reuse the markdown image ref pattern — video_gen uses ![prompt](path.mp4).
+    // Reuse the markdown image ref pattern — generated video uses ![prompt](path.mp4).
     static MD_RE: LazyLock<regex::Regex> =
         LazyLock::new(|| regex::Regex::new(MARKDOWN_IMAGE_REF_PATTERN).unwrap());
 
@@ -4026,7 +4026,7 @@ mod tests {
             assert!(!ic.data.is_empty());
             // The durable session copy is surfaced through `uri` even for
             // clipboard pastes (no `source_path`). This is the reference
-            // `image_edit` resolves `[Image #N]` against; vision is
+            // `attached-image` resolves `[Image #N]` against; vision is
             // unaffected because `pick_user_image_url` never forwards a
             // `file://` URI to the model.
             assert_eq!(

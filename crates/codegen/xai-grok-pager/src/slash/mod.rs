@@ -2569,19 +2569,19 @@ mod tests {
         let state = SlashState::default();
         let models = ModelState::default();
 
-        let text = "hi /imagine\n\n  /execute-plan";
-        let cursor = text.find("/imagine").unwrap() + "/imagine".len();
+        let text = "hi /loop\n\n  /execute-plan";
+        let cursor = text.find("/loop").unwrap() + "/loop".len();
         ctrl.refresh(&state, text, cursor, &models);
         let snapshot = state.snapshot();
         assert!(
             snapshot.cursor_in_command,
-            "cursor at end of /imagine must stay in command mode for Tab"
+            "cursor at end of /loop must stay in command mode for Tab"
         );
         assert_eq!(snapshot.args_range, None);
         assert_eq!(
             snapshot.command_range,
             Some(3..11),
-            "Tab must target /imagine, not the later /execute-plan token"
+            "Tab must target /loop, not the later /execute-plan token"
         );
     }
 

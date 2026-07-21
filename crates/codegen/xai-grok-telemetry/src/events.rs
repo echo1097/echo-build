@@ -1134,7 +1134,7 @@ pub enum SuperGrokUpsell {
     /// `subscription:free-usage-exhausted` well-known error code).
     FreeUsagePaywall,
     /// Upsell modal shown when a tier-restricted slash command
-    /// (`/usage`, `/imagine`, …) is invoked on the free / X Basic tiers.
+    /// (`/usage`, …) is invoked on the free / X Basic tiers.
     RestrictedCommand,
 }
 
