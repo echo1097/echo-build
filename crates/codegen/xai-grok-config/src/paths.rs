@@ -1,9 +1,9 @@
-//! Filesystem locations for grok config files and binaries.
+//! Filesystem locations for Echo Build config files and binaries.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-static GROK_HOME: OnceLock<PathBuf> = OnceLock::new();
+static ECHO_BUILD_HOME: OnceLock<PathBuf> = OnceLock::new();
 
 #[cfg(target_os = "macos")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str =
@@ -11,8 +11,8 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str =
 #[cfg(target_os = "linux")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
-/// The default user grok directory (`~/.grok`, canonicalized) used when
-/// `GROK_HOME` is unset. Exposed so callers (e.g. display helpers) can detect
+/// The default Echo Build directory (`~/.echo-build`, canonicalized) used when
+/// no home override is set. Exposed so callers can detect
 /// whether [`grok_home()`] is the default without duplicating the computation.
 ///
 /// Uses [`dunce::canonicalize`] instead of [`std::fs::canonicalize`]: on
@@ -28,50 +28,80 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.js
 pub fn default_grok_home() -> PathBuf {
     #[allow(deprecated)]
     let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    dunce::canonicalize(&home).unwrap_or(home).join(".grok")
+    dunce::canonicalize(&home)
+        .unwrap_or(home)
+        .join(".echo-build")
 }
 
-/// Per-user config directory: `$GROK_HOME` or `~/.grok`. Created if needed.
+/// Per-user config directory.
+///
+/// `ECHO_BUILD_HOME` is canonical. `GROK_HOME` remains a read-time compatibility
+/// alias through the 0.2 release line and is planned for removal in 0.3.0.
 pub fn grok_home() -> PathBuf {
-    GROK_HOME
+    ECHO_BUILD_HOME
         .get_or_init(|| {
-            let grok_home = if let Ok(v) = std::env::var("GROK_HOME") {
-                PathBuf::from(v)
-            } else {
-                default_grok_home()
-            };
-            let _ = std::fs::create_dir_all(&grok_home);
-            grok_home
+            let echo_override = nonempty_env("ECHO_BUILD_HOME");
+            let legacy_override = nonempty_env("GROK_HOME");
+            if echo_override.is_none() && legacy_override.is_some() {
+                tracing::warn!(
+                    "GROK_HOME is deprecated; use ECHO_BUILD_HOME (support ends in 0.3.0)"
+                );
+            }
+            let echo_home = select_home(echo_override, legacy_override, default_grok_home());
+            let _ = std::fs::create_dir_all(&echo_home);
+            echo_home
         })
         .clone()
 }
 
+fn nonempty_env(name: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(name).filter(|value| !value.is_empty())
+}
+
+fn select_home(
+    canonical: Option<std::ffi::OsString>,
+    legacy: Option<std::ffi::OsString>,
+    default_home: PathBuf,
+) -> PathBuf {
+    canonical
+        .or(legacy)
+        .map(PathBuf::from)
+        .unwrap_or(default_home)
+}
+
 /// The user-global grok home, but only when one genuinely resolves: `Some` when
-/// `$GROK_HOME` is set or a home directory is found, `None` otherwise. Unlike
+/// an Echo or legacy home override is set or a home directory is found, `None`
+/// otherwise. Unlike
 /// [`grok_home()`], this never falls back to a cwd-relative `.grok`, so callers
 /// that *scan* user-global grok resources (hooks, marketplace sources, ...) don't
 /// mistake a project's `.grok` tree for the user-global one when no home resolves.
 pub fn user_grok_home() -> Option<PathBuf> {
     #[allow(deprecated)]
-    let resolvable = std::env::var_os("GROK_HOME").is_some() || std::env::home_dir().is_some();
+    let resolvable = nonempty_env("ECHO_BUILD_HOME").is_some()
+        || nonempty_env("GROK_HOME").is_some()
+        || std::env::home_dir().is_some();
     resolvable.then(grok_home)
 }
 
-/// Canonical grok application path: `$GROK_HOME/bin/grok` (Unix) or `grok.exe` (Windows).
+/// Canonical Echo Build application path.
 pub fn grok_application() -> PathBuf {
     grok_application_in(&grok_home())
 }
 
 /// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
 pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
-    let name = if cfg!(windows) { "grok.exe" } else { "grok" };
+    let name = if cfg!(windows) {
+        "echo-build.exe"
+    } else {
+        "echo-build"
+    };
     home.join("bin").join(name)
 }
 
-/// System-wide config directory: `/etc/grok/` on Unix, `None` on Windows.
+/// System-wide config directory: `/etc/echo-build/` on Unix, `None` on Windows.
 pub fn system_config_dir() -> Option<PathBuf> {
     if cfg!(unix) {
-        Some(PathBuf::from("/etc/grok"))
+        Some(PathBuf::from("/etc/echo-build"))
     } else {
         None
     }
@@ -209,6 +239,7 @@ fn slugify(input: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use tempfile::TempDir;
 
     /// Realistic CWDs that trigger the bug (URL-encoded > 255 bytes).
@@ -312,7 +343,41 @@ mod tests {
         // canonicalization must yield a plain path. No-op assertion on Unix.
         let home = default_grok_home();
         assert!(!home.to_string_lossy().starts_with(r"\\?\"));
-        assert!(home.ends_with(".grok"));
+        assert!(home.ends_with(".echo-build"));
+    }
+
+    #[test]
+    fn canonical_application_uses_echo_build_name() {
+        let home = Path::new("/tmp/echo-home");
+        let expected = if cfg!(windows) {
+            home.join("bin/echo-build.exe")
+        } else {
+            home.join("bin/echo-build")
+        };
+
+        assert_eq!(grok_application_in(home), expected);
+    }
+
+    #[test]
+    fn canonical_home_override_wins_over_legacy_alias() {
+        let selected = select_home(
+            Some("/tmp/echo".into()),
+            Some("/tmp/grok".into()),
+            PathBuf::from("/tmp/default"),
+        );
+
+        assert_eq!(selected, PathBuf::from("/tmp/echo"));
+    }
+
+    #[test]
+    fn legacy_home_override_remains_a_temporary_fallback() {
+        let selected = select_home(
+            None,
+            Some("/tmp/grok".into()),
+            PathBuf::from("/tmp/default"),
+        );
+
+        assert_eq!(selected, PathBuf::from("/tmp/grok"));
     }
 
     #[test]

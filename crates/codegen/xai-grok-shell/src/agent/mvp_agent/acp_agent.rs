@@ -297,11 +297,12 @@ impl acp::Agent for MvpAgent {
                         .load_session(true)
                         .meta(
                             serde_json::json!(
-                                { "x.ai/fs_notify" : true, "x.ai/hooks" : { "blockingEvents"
+                                { "echo.build/fs_notify" : true, "echo.build/hooks" : { "blockingEvents"
                                 : crate ::extensions::hooks::ADVERTISED_BLOCKING_EVENTS,
                                 "decisions" : crate
                                 ::extensions::hooks::ADVERTISED_DECISIONS, "stopSignals" :
-                                crate ::extensions::hooks::ADVERTISED_STOP_SIGNALS, }, }
+                                crate ::extensions::hooks::ADVERTISED_STOP_SIGNALS, },
+                                "echo.build/extensions" : crate::extensions::product_contract::capabilities(), }
                             )
                                 .as_object()
                                 .cloned(),
@@ -317,7 +318,7 @@ impl acp::Agent for MvpAgent {
                 .meta({
                     let metadata = parse_json_object_env("GROK_AGENT_METADATA");
                     serde_json::json!(
-                        { "grokShell" : true, "defaultAuthMethodId" :
+                        { "echoBuild" : true, "grokShell" : true, "defaultAuthMethodId" :
                         default_auth_method_id_wire, (xai_grok_mcp::wire::MCP_SDK) :
                         true, (SESSION_PLUGIN_DIRS_CAPABILITY_KEY) : true,
                         "currentWorkingDirectory" : current_working_directory
@@ -3024,6 +3025,20 @@ impl acp::Agent for MvpAgent {
             xai_file_utils::trace_context::link_current_span_to_meta(meta);
         }
         tracing::info!("Received extension method call: method={}", args.method);
+        if args.method.as_ref() == "echo.build/capabilities" {
+            return crate::extensions::to_raw_response(
+                &crate::extensions::product_contract::capabilities(),
+            );
+        }
+        let method_route = crate::extensions::product_contract::route_method(args.method.as_ref());
+        if method_route.legacy_alias {
+            tracing::warn!(
+                method = %args.method,
+                removal_version = crate::extensions::product_contract::LEGACY_ALIAS_REMOVAL_VERSION,
+                "deprecated ACP extension alias used"
+            );
+        }
+        let args = acp::ExtRequest::new(method_route.internal_method, args.params.clone());
         #[allow(unused_mut)]
         let mut backend_no_bridge_err: Option<acp::Error> = None;
         let method = args.method.clone();

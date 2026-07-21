@@ -634,7 +634,7 @@ pub(super) fn session_picker_entry_to_roster(
 }
 pub(super) async fn send_logout(tx: &AcpAgentTx) -> Result<(), String> {
     let req = acp::ExtRequest::new(
-        "x.ai/auth/logout",
+        "echo.openrouter/logout",
         serde_json::value::to_raw_value(&serde_json::json!({}))
             .expect("serialize auth/logout params")
             .into(),

@@ -15,8 +15,8 @@ use crate::session::ExtMethodResult;
 pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     match args.method.as_ref() {
         "x.ai/auth/getBearerToken" => handle_get_api_key(),
-        "echo.openrouter/getApiKeyStatus" | "x.ai/getApiKey" => handle_get_api_key(),
-        "echo.openrouter/setApiKey" | "x.ai/setApiKey" => handle_set_api_key(agent, args).await,
+        "x.ai/getApiKey" => handle_get_api_key(),
+        "x.ai/setApiKey" => handle_set_api_key(agent, args).await,
         "x.ai/auth/logout" => handle_logout(agent, args).await,
         "x.ai/auth/info" => handle_info(agent),
         _ => Err(acp::Error::method_not_found()),

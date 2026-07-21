@@ -8,6 +8,9 @@
 
 ## Improvements
 
+- Established the public Echo Build contract: the executable and Cargo artifact are now `echo-build`, the default state root is `~/.echo-build`, and canonical environment variables use the `ECHO_BUILD_` prefix.
+- Added canonical `echo.build/*` ACP extensions and `echo.openrouter/*` authentication methods with discoverable capability metadata. Temporary `x.ai/*` and selected `GROK_*` aliases are scheduled for removal in 0.3.0.
+- Updated process restart, leader discovery, shell completions, terminal titles, notifications, and source-build documentation to use the Echo Build identity.
 - Added secure OpenRouter API key login backed only by the operating system credential store, plus `/auth` for updating or clearing the key.
 - Routed inference and model discovery through OpenRouter, with OpenRouter Auto as the default and safeguards that prevent credentials from being sent to legacy provider hosts.
 - Expanded the model picker with provider slugs, agent capability labels, image support, reasoning support, and accurate per-model context windows.

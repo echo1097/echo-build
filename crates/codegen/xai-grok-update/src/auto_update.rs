@@ -1238,7 +1238,7 @@ async fn activate_verified_download(download: &VerifiedDownload) -> Result<()> {
     let bin_dir = grok_home.join("bin");
     tokio::fs::create_dir_all(&bin_dir).await?;
 
-    // Atomic swap of ~/.grok/bin/{grok,agent} -> downloaded binary.
+    // Atomic swap of ~/.echo-build/bin/{echo-build,agent} -> downloaded binary.
     let link_path = swap_managed_bin_links(&download.binary_path, &bin_dir).await?;
 
     remove_stale_pager(&bin_dir).await;
@@ -1246,7 +1246,7 @@ async fn activate_verified_download(download: &VerifiedDownload) -> Result<()> {
     eprintln!();
 
     // Clean up old versioned binaries (keeps current + 1 previous).
-    cleanup_old_downloads(&download_dir, "grok", &download.version).await;
+    cleanup_old_downloads(&download_dir, "echo-build", &download.version).await;
     cleanup_old_downloads(&download_dir, "grok-pager", &download.version).await;
 
     // Persist installer to config.toml so future runs auto-detect internal.
@@ -1353,7 +1353,11 @@ async fn swap_managed_bin_links(
     binary_path: &std::path::Path,
     bin_dir: &std::path::Path,
 ) -> Result<std::path::PathBuf> {
-    let grok_name = if cfg!(windows) { "grok.exe" } else { "grok" };
+    let grok_name = if cfg!(windows) {
+        "echo-build.exe"
+    } else {
+        "echo-build"
+    };
     let agent_name = if cfg!(windows) { "agent.exe" } else { "agent" };
     let grok_link = bin_dir.join(grok_name);
     let agent_link = bin_dir.join(agent_name);
@@ -1891,7 +1895,7 @@ async fn heal_managed_install(installer: &str) {
 
 #[cfg(unix)]
 async fn reconcile_agent_to_grok(bin_dir: &std::path::Path) {
-    let grok_link = bin_dir.join("grok");
+    let grok_link = bin_dir.join("echo-build");
     let agent_link = bin_dir.join("agent");
 
     let Ok(grok_target) = tokio::fs::read_link(&grok_link).await else {
@@ -1916,7 +1920,7 @@ async fn reconcile_agent_to_grok(bin_dir: &std::path::Path) {
 
 #[cfg(windows)]
 async fn reconcile_agent_exe_to_grok(bin_dir: &std::path::Path) {
-    let grok_exe = bin_dir.join("grok.exe");
+    let grok_exe = bin_dir.join("echo-build.exe");
     let agent_exe = bin_dir.join("agent.exe");
 
     if tokio::fs::metadata(&grok_exe).await.is_err() {
@@ -1931,8 +1935,8 @@ async fn reconcile_agent_exe_to_grok(bin_dir: &std::path::Path) {
         }
     }
     match windows_replace_exe(&grok_exe, &agent_exe).await {
-        Ok(()) => tracing::info!("reconciled agent.exe to grok.exe"),
-        Err(e) => tracing::warn!("failed to reconcile agent.exe to grok.exe: {e:#}"),
+        Ok(()) => tracing::info!("reconciled agent.exe to echo-build.exe"),
+        Err(e) => tracing::warn!("failed to reconcile agent.exe to echo-build.exe: {e:#}"),
     }
 }
 
@@ -2056,22 +2060,24 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
     // resolve to the newly installed version.
     #[cfg(unix)]
     {
-        let latest_path = download_dir.join("grok-latest");
+        let latest_path = download_dir.join("echo-build-latest");
         let rel_target = relative_symlink_target(&binary_path, &latest_path);
         if let Err(e) = atomic_symlink_swap(&rel_target, &latest_path).await {
-            tracing::warn!("Failed to update grok-latest symlink: {e}");
+            tracing::warn!("Failed to update echo-build-latest symlink: {e}");
         }
     }
 
-    // Also update /usr/local/bin/{grok,agent} if either points directly into
-    // ~/.grok/downloads/ (legacy layout — skips the grok-latest indirection).
+    // Also update /usr/local/bin/{echo-build,agent} if either points directly into
+    // ~/.echo-build/downloads/ (legacy layout — skips the latest indirection).
     // Permission errors ignored.
     #[cfg(unix)]
-    for name in ["grok", "agent"] {
+    for name in ["echo-build", "agent"] {
         let system_link = std::path::PathBuf::from(format!("/usr/local/bin/{name}"));
         if let Ok(existing_target) = tokio::fs::read_link(&system_link).await {
             let target_str = existing_target.to_string_lossy();
-            if target_str.contains(".grok/downloads/") && !target_str.ends_with("grok-latest") {
+            if target_str.contains(".echo-build/downloads/")
+                && !target_str.ends_with("echo-build-latest")
+            {
                 // Try to update; ignore permission errors
                 let _ = atomic_symlink_swap(&binary_path, &system_link).await;
             }
@@ -2083,7 +2089,7 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
     eprintln!();
 
     // Clean up old versioned binaries (keeps current + 1 previous).
-    cleanup_old_downloads(&download_dir, "grok", &version).await;
+    cleanup_old_downloads(&download_dir, "echo-build", &version).await;
     cleanup_old_downloads(&download_dir, "grok-pager", &version).await;
 
     // Persist installer to config.toml so future runs auto-detect gh-release.
@@ -2713,8 +2719,11 @@ mod tests {
         std::fs::write(downloads.join("grok-0.2.101-macos-aarch64"), "new").unwrap();
         std::fs::write(downloads.join("grok-0.1.199-macos-aarch64"), "old").unwrap();
 
-        std::os::unix::fs::symlink("../downloads/grok-0.2.101-macos-aarch64", bin.join("grok"))
-            .unwrap();
+        std::os::unix::fs::symlink(
+            "../downloads/grok-0.2.101-macos-aarch64",
+            bin.join("echo-build"),
+        )
+        .unwrap();
         std::os::unix::fs::symlink("../downloads/grok-0.1.199-macos-aarch64", bin.join("agent"))
             .unwrap();
 
@@ -2735,8 +2744,11 @@ mod tests {
         std::fs::write(downloads.join("grok-0.2.101-macos-aarch64"), "new").unwrap();
         std::fs::write(downloads.join("grok-macos-aarch64"), "legacy").unwrap();
 
-        std::os::unix::fs::symlink("../downloads/grok-0.2.101-macos-aarch64", bin.join("grok"))
-            .unwrap();
+        std::os::unix::fs::symlink(
+            "../downloads/grok-0.2.101-macos-aarch64",
+            bin.join("echo-build"),
+        )
+        .unwrap();
         std::os::unix::fs::symlink("../downloads/grok-macos-aarch64", bin.join("agent")).unwrap();
 
         reconcile_agent_to_grok(&bin).await;
@@ -2753,8 +2765,11 @@ mod tests {
     async fn test_reconcile_agent_creates_missing_agent() {
         let (_dir, bin, downloads) = managed_layout();
         std::fs::write(downloads.join("grok-0.2.101-macos-aarch64"), "new").unwrap();
-        std::os::unix::fs::symlink("../downloads/grok-0.2.101-macos-aarch64", bin.join("grok"))
-            .unwrap();
+        std::os::unix::fs::symlink(
+            "../downloads/grok-0.2.101-macos-aarch64",
+            bin.join("echo-build"),
+        )
+        .unwrap();
 
         reconcile_agent_to_grok(&bin).await;
 
@@ -2768,7 +2783,7 @@ mod tests {
         let (_dir, bin, downloads) = managed_layout();
         std::fs::write(downloads.join("grok-0.2.101-macos-aarch64"), "new").unwrap();
         let target = "../downloads/grok-0.2.101-macos-aarch64";
-        std::os::unix::fs::symlink(target, bin.join("grok")).unwrap();
+        std::os::unix::fs::symlink(target, bin.join("echo-build")).unwrap();
         std::os::unix::fs::symlink(target, bin.join("agent")).unwrap();
 
         reconcile_agent_to_grok(&bin).await;
@@ -2789,8 +2804,11 @@ mod tests {
     #[tokio::test]
     async fn test_reconcile_agent_skips_when_grok_dangling() {
         let (_dir, bin, downloads) = managed_layout();
-        std::os::unix::fs::symlink("../downloads/grok-0.2.101-macos-aarch64", bin.join("grok"))
-            .unwrap();
+        std::os::unix::fs::symlink(
+            "../downloads/grok-0.2.101-macos-aarch64",
+            bin.join("echo-build"),
+        )
+        .unwrap();
         std::fs::write(downloads.join("grok-0.1.199-macos-aarch64"), "old").unwrap();
         std::os::unix::fs::symlink("../downloads/grok-0.1.199-macos-aarch64", bin.join("agent"))
             .unwrap();
@@ -2807,7 +2825,7 @@ mod tests {
     #[tokio::test]
     async fn test_reconcile_agent_skips_when_grok_not_symlink() {
         let (_dir, bin, downloads) = managed_layout();
-        std::fs::write(bin.join("grok"), "copy-binary").unwrap();
+        std::fs::write(bin.join("echo-build"), "copy-binary").unwrap();
         std::fs::write(downloads.join("grok-0.1.199-macos-aarch64"), "old").unwrap();
         std::os::unix::fs::symlink("../downloads/grok-0.1.199-macos-aarch64", bin.join("agent"))
             .unwrap();
