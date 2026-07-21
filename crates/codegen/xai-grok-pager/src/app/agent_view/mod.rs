@@ -829,8 +829,10 @@ pub struct AgentView {
     /// Provider-reported cost accumulated from this session's completed turns.
     /// USD ticks use the wire convention of 1e10 ticks per dollar.
     pub session_cost_usd_ticks: i64,
-    /// Prompt ids already included in the accumulated session cost.
-    pub(crate) session_cost_prompt_ids: HashSet<String>,
+    /// Cost already attributed to each prompt, used by turn-end reconciliation.
+    pub(crate) session_cost_by_prompt: HashMap<String, i64>,
+    /// Completed model calls already applied to the live total.
+    pub(crate) session_cost_call_ids: HashSet<(String, u32)>,
     /// Gateway light-frontend session (`kind: "chat"` / `--chat` / conversation
     /// resume). Suppresses Build credits / local sampler context telemetry so the
     /// status bar and prompt never imply remote usage from wrong metrics.

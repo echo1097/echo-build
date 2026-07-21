@@ -210,18 +210,33 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
             ref images,
             ref message,
         } => apply_image_compressed(agent, images, message),
+        XaiSessionUpdate::ModelCallCost {
+            prompt_id,
+            call_index,
+            cost_usd_ticks,
+        } => apply_model_call_cost(
+            agent,
+            prompt_id.clone(),
+            prompt_id,
+            call_index,
+            cost_usd_ticks,
+        ),
         XaiSessionUpdate::TurnCompleted {
             prompt_id,
             stop_reason,
             agent_result,
             usage,
         } => {
-            if let Some(cost_usd_ticks) = usage.and_then(|usage| usage.totals.cost_usd_ticks)
-                && agent.session_cost_prompt_ids.insert(prompt_id.clone())
-            {
+            if let Some(cost_usd_ticks) = usage.and_then(|usage| usage.totals.cost_usd_ticks) {
+                let cost_usd_ticks = cost_usd_ticks.max(0);
+                let streamed_cost = agent
+                    .session_cost_by_prompt
+                    .insert(prompt_id.clone(), cost_usd_ticks)
+                    .unwrap_or(0);
                 agent.session_cost_usd_ticks = agent
                     .session_cost_usd_ticks
-                    .saturating_add(cost_usd_ticks.max(0));
+                    .saturating_sub(streamed_cost)
+                    .saturating_add(cost_usd_ticks);
             }
 
             if agent.session.loading_replay {
@@ -1045,6 +1060,27 @@ pub(super) fn handle_child_session_notification(
     is_api_key_auth: bool,
 ) -> bool {
     match update {
+        XaiSessionUpdate::ModelCallCost {
+            prompt_id,
+            call_index,
+            cost_usd_ticks,
+        } => {
+            let Some(parent_prompt_id) = agent
+                .subagent_sessions
+                .get(child_sid)
+                .and_then(|info| info.parent_prompt_id.as_ref())
+                .map(|prompt_id| prompt_id.to_string())
+            else {
+                return false;
+            };
+            apply_model_call_cost(
+                agent,
+                parent_prompt_id,
+                format!("{child_sid}:{prompt_id}"),
+                call_index,
+                cost_usd_ticks,
+            )
+        }
         XaiSessionUpdate::AutoCompactStarted { .. }
         | XaiSessionUpdate::AutoCompactCompleted { .. }
         | XaiSessionUpdate::AutoCompactFailed { .. }
@@ -1093,6 +1129,30 @@ pub(super) fn handle_child_session_notification(
         }
         _ => false,
     }
+}
+
+fn apply_model_call_cost(
+    agent: &mut AgentView,
+    accounting_prompt_id: String,
+    call_prompt_id: String,
+    call_index: u32,
+    cost_usd_ticks: i64,
+) -> bool {
+    if !agent
+        .session_cost_call_ids
+        .insert((call_prompt_id, call_index))
+    {
+        return false;
+    }
+
+    let cost_usd_ticks = cost_usd_ticks.max(0);
+    agent.session_cost_usd_ticks = agent.session_cost_usd_ticks.saturating_add(cost_usd_ticks);
+    let prompt_cost = agent
+        .session_cost_by_prompt
+        .entry(accounting_prompt_id)
+        .or_default();
+    *prompt_cost = prompt_cost.saturating_add(cost_usd_ticks);
+    true
 }
 /// Apply a compaction or retry event to a session's activity state and scrollback.
 ///

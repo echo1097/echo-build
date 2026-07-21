@@ -891,6 +891,13 @@ pub enum SessionUpdate {
     /// or errored). Fire-and-forget, **never persisted**. Subscribers clear the
     /// pending ⏳ for this `tool_call_id`.
     InteractionResolved { tool_call_id: String },
+    /// Provider-reported cost for one completed model API call.
+    /// Persisted so replay can rebuild the live session total before the turn ends.
+    ModelCallCost {
+        prompt_id: String,
+        call_index: u32,
+        cost_usd_ticks: i64,
+    },
     /// The durable, replayable signal that a turn reached its terminal
     /// outcome. Rides the persisted `_x.ai/session/update` rail (unlike the
     /// fire-and-forget `x.ai/session/prompt_complete` notification), so a
@@ -2093,6 +2100,24 @@ mod tests {
     }
 
     // ── TurnCompleted (durable, replayable turn-end signal) ──
+
+    #[test]
+    fn model_call_cost_roundtrips_with_exact_ticks() {
+        let update = SessionUpdate::ModelCallCost {
+            prompt_id: "p-cost".into(),
+            call_index: 3,
+            cost_usd_ticks: 123_456_789,
+        };
+        let json = serde_json::to_value(&update).unwrap();
+        assert_eq!(json["sessionUpdate"], "model_call_cost");
+        assert_eq!(json["prompt_id"], "p-cost");
+        assert_eq!(json["call_index"], 3);
+        assert_eq!(json["cost_usd_ticks"], 123_456_789);
+        assert_eq!(
+            serde_json::from_value::<SessionUpdate>(json).unwrap(),
+            update
+        );
+    }
 
     #[test]
     fn turn_completed_serializes_snake_case_tag_and_fields() {

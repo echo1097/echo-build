@@ -2066,6 +2066,21 @@ impl SessionActor {
                 );
             }
             self.record_response_token_usage(&response, Some(model_duration_ms));
+            if let Some(cost_usd_ticks) =
+                xai_grok_sampling_types::reported_cost_ticks(response.cost_usd_ticks)
+                && let Some(prompt_id) = self
+                    .current_prompt_id
+                    .lock()
+                    .ok()
+                    .and_then(|prompt_id| prompt_id.clone())
+            {
+                self.send_xai_notification(XaiSessionUpdate::ModelCallCost {
+                    prompt_id,
+                    call_index: loop_index,
+                    cost_usd_ticks,
+                })
+                .await;
+            }
             if let Some(pt) = prompt_timing.take() {
                 let mcp_count = self.mcp_state.lock().await.configs.len() as u32;
                 let mcp_tools = self

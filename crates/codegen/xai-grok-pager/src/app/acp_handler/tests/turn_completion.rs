@@ -231,6 +231,36 @@
     }
 
     #[test]
+    fn model_call_cost_updates_immediately_and_turn_end_reconciles() {
+        let mut app = make_app_with_agent("sess-live-cost");
+        let id = AgentId(0);
+
+        for notification in [
+            xai_model_call_cost_notif("sess-live-cost", "p-1", 1, 180_000_000, false),
+            xai_model_call_cost_notif("sess-live-cost", "p-1", 2, 320_000_000, false),
+        ] {
+            assert!(handle_ext_notification(&notification, &mut app));
+        }
+        assert_eq!(app.agents[&id].session_cost_usd_ticks, 500_000_000);
+
+        let duplicate =
+            xai_model_call_cost_notif("sess-live-cost", "p-1", 2, 320_000_000, false);
+        assert!(!handle_ext_notification(&duplicate, &mut app));
+        assert_eq!(app.agents[&id].session_cost_usd_ticks, 500_000_000);
+
+        let completed =
+            xai_turn_completed_with_cost("sess-live-cost", "p-1", Some(550_000_000), false);
+        let _ = handle_ext_notification(&completed, &mut app);
+        assert_eq!(app.agents[&id].session_cost_usd_ticks, 550_000_000);
+
+        app.agents.get_mut(&id).unwrap().session.loading_replay = true;
+        let replayed =
+            xai_model_call_cost_notif("sess-live-cost", "p-2", 1, 700_000_000, true);
+        assert!(handle_ext_notification(&replayed, &mut app));
+        assert_eq!(app.agents[&id].session_cost_usd_ticks, 1_250_000_000);
+    }
+
+    #[test]
     fn live_turn_completed_driver_arms_reconcile() {
         // For the driver the `PromptResponse` RPC owns the lifecycle, so a live
         // TurnCompleted for the turn it is driving arms the lost-RPC reconcile

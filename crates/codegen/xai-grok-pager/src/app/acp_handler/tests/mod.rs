@@ -953,6 +953,28 @@ pub(super) fn xai_turn_completed_with_cost(
         std::sync::Arc::from(serde_json::value::to_raw_value(&payload).unwrap()),
     )
 }
+
+pub(super) fn xai_model_call_cost_notif(
+    session_id: &str,
+    prompt_id: &str,
+    call_index: u32,
+    cost_usd_ticks: i64,
+    is_replay: bool,
+) -> acp::ExtNotification {
+    let payload = SessionNotification {
+        session_id: acp::SessionId::new(session_id),
+        update: XaiSessionUpdate::ModelCallCost {
+            prompt_id: prompt_id.into(),
+            call_index,
+            cost_usd_ticks,
+        },
+        meta: Some(serde_json::json!({ "isReplay": is_replay })),
+    };
+    acp::ExtNotification::new(
+        "x.ai/session/update",
+        std::sync::Arc::from(serde_json::value::to_raw_value(&payload).unwrap()),
+    )
+}
 /// A live durable `TurnCompleted`, optionally stamped with the shell
 /// completion clock (`agentTimestampMs`) the wake marker's elapsed reads.
 pub(super) fn xai_wake_turn_completed_notif(
