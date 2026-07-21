@@ -1282,6 +1282,15 @@ impl AgentView {
             .as_ref()
             .and_then(|c| (c.total > 0).then_some(c.total))
             .or(model_window);
+        status.push(
+            "session_cost",
+            context_bar::session_cost_line(
+                self.session_cost_usd_ticks,
+                ctx_used,
+                ctx_total,
+                &theme,
+            ),
+        );
         if let Some(ctx_line) = context_bar::context_bar_line_for_session(
             ctx_used,
             ctx_total,

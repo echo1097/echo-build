@@ -5,7 +5,7 @@
 use agent_client_protocol as acp;
 use xai_grok_shell::sampling::types::supports_reasoning_effort_meta;
 
-use crate::acp::model_state::{model_display_name, ModelState};
+use crate::acp::model_state::{ModelState, model_display_name};
 use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
 use crate::slash::commands::effort_levels::build_effort_arg_items;
@@ -170,14 +170,20 @@ fn build_model_items(models: &ModelState) -> Vec<ArgItem> {
             .and_then(|value| value.as_u64())
             .map(format_context_window)
             .unwrap_or_else(|| "unknown ctx".to_string());
+        let pricing = meta
+            .and_then(|value| value.get("pricing"))
+            .and_then(format_pricing);
         let capability = if agent_capable { "Agent" } else { "Chat only" };
         let model_name = model_display_name(&info.name);
 
-        let display = if is_current {
-            format!("{model_name}  [{capability}]  {context}  (current)")
-        } else {
-            format!("{model_name}  [{capability}]  {context}")
-        };
+        let mut tags = format!("[{capability}]  {context}");
+        if let Some(pricing) = pricing {
+            tags.push_str(&format!("  {pricing}"));
+        }
+        if is_current {
+            tags.push_str("  (current)");
+        }
+        let display = format!("{model_name}  {tags}");
 
         // Trailing space on reasoning models: signals "more input
         // expected" to the prompt widget so Enter advances to effort
@@ -192,13 +198,38 @@ fn build_model_items(models: &ModelState) -> Vec<ArgItem> {
             display,
             match_text: format!("{} {slug}", info.name),
             insert_text,
-            description: match info.description.as_deref() {
-                Some(description) if !description.is_empty() => format!("{slug} · {description}"),
-                _ => slug.to_string(),
-            },
+            description: info.description.clone().unwrap_or_default(),
         });
     }
     items
+}
+
+fn format_pricing(value: &serde_json::Value) -> Option<String> {
+    let pricing = value.as_object()?;
+    let prompt = pricing.get("prompt")?.as_f64()? * 1_000_000.0;
+    let completion = pricing.get("completion")?.as_f64()? * 1_000_000.0;
+
+    Some(format!(
+        "${}/M in  ${}/M out",
+        format_price(prompt),
+        format_price(completion)
+    ))
+}
+
+fn format_price(price: f64) -> String {
+    if price == 0.0 {
+        "0".to_string()
+    } else if price >= 1.0 {
+        format!("{price:.2}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    } else {
+        format!("{price:.4}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
 }
 
 fn format_context_window(tokens: u64) -> String {
@@ -338,6 +369,10 @@ mod tests {
                     "modelSlug": slug,
                     "agentCapable": agent_capable,
                     "totalContextTokens": context,
+                    "pricing": {
+                        "prompt": 0.000003,
+                        "completion": 0.000015,
+                    },
                 })
                 .as_object()
                 .cloned(),
@@ -349,9 +384,42 @@ mod tests {
         assert!(items[0].display.contains("[Chat only]"));
         assert!(items[0].display.contains("8K ctx"));
         assert!(items[0].match_text.contains("provider/small"));
+        assert!(items[0].display.contains("$3/M in  $15/M out"));
         assert!(items[1].display.contains("[Agent]"));
         assert!(items[1].display.contains("128K ctx"));
-        assert!(items[2].display.contains("1M ctx"));
+        assert!(items[2].display.contains("1.0M ctx"));
+    }
+
+    #[test]
+    fn model_picker_description_does_not_repeat_slug() {
+        let mut state = ModelState::default();
+        let id = acp::ModelId::new(Arc::from("anthropic/fable-5"));
+        let info = acp::ModelInfo::new(id.clone(), "Fable 5".to_string())
+            .description("A fast coding model".to_string())
+            .meta(
+                serde_json::json!({ "modelSlug": "anthropic/fable-5" })
+                    .as_object()
+                    .cloned(),
+            );
+        state.available.insert(id, info);
+
+        let items = build_model_items(&state);
+
+        assert_eq!(items[0].description, "A fast coding model");
+        assert!(!items[0].description.contains("anthropic/fable-5"));
+        assert!(items[0].match_text.contains("anthropic/fable-5"));
+    }
+
+    #[test]
+    fn format_pricing_handles_free_and_fractional_rates() {
+        assert_eq!(
+            format_pricing(&serde_json::json!({ "prompt": 0.0, "completion": 0.0 })),
+            Some("$0/M in  $0/M out".to_string())
+        );
+        assert_eq!(
+            format_pricing(&serde_json::json!({ "prompt": 0.00000015, "completion": 0.0000006 })),
+            Some("$0.15/M in  $0.6/M out".to_string())
+        );
     }
 
     #[test]

@@ -3279,6 +3279,7 @@ fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
             base_url: String::new(),
             name: None,
             description: None,
+            pricing: None,
             agent_capable: true,
             input_modalities: vec!["text".to_string()],
             supported_parameters: vec!["tools".to_string()],

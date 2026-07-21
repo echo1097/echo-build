@@ -2086,6 +2086,7 @@ fn find_model_by_id_prefers_key_then_falls_back_to_slug() {
             base_url: String::new(),
             name: None,
             description: None,
+            pricing: None,
             agent_capable: true,
             input_modalities: vec!["text".to_string()],
             supported_parameters: vec!["tools".to_string()],

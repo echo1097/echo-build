@@ -50,6 +50,16 @@ pub fn desired_item_rows(items: &[SuggestionRow], items_width: u16) -> u16 {
 /// The label column gets up to 60% of the available width (capped at `LABEL_CAP`).
 /// This prioritises showing the full command name over the description.
 fn compute_label_column_w(items: &[SuggestionRow], content_w: usize) -> usize {
+    let has_model_pricing = items.iter().any(|row| row.display.contains("/M in"));
+    if has_model_pricing {
+        return items
+            .iter()
+            .map(|row| row.display.width())
+            .max()
+            .unwrap_or(0)
+            .min(content_w);
+    }
+
     let budget = (content_w * 3 / 5).min(LABEL_CAP);
     let max_display_w = items
         .iter()
@@ -570,6 +580,17 @@ mod tests {
         // All-short descriptions keep the one-row-per-item sizing.
         let short = vec![row("/exit", "Quit"), row("/model", "Switch model")];
         assert_eq!(desired_item_rows(&short, 60), 2);
+    }
+
+    #[test]
+    fn model_pricing_rows_keep_the_full_metadata_column() {
+        let priced = row(
+            "Claude Fable 5  [Agent]  1M ctx  $3/M in  $15/M out",
+            "A capable coding model",
+        );
+        let items = vec![priced.clone()];
+
+        assert_eq!(compute_label_column_w(&items, 120), priced.display.width());
     }
 
     /// Every item is on screen (present in the hit map) when the area is

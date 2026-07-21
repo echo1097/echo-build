@@ -214,8 +214,16 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
             prompt_id,
             stop_reason,
             agent_result,
-            ..
+            usage,
         } => {
+            if let Some(cost_usd_ticks) = usage.and_then(|usage| usage.totals.cost_usd_ticks)
+                && agent.session_cost_prompt_ids.insert(prompt_id.clone())
+            {
+                agent.session_cost_usd_ticks = agent
+                    .session_cost_usd_ticks
+                    .saturating_add(cost_usd_ticks.max(0));
+            }
+
             if agent.session.loading_replay {
                 agent.replayed_terminal_prompts.insert(prompt_id);
                 false

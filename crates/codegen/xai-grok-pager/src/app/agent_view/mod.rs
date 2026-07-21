@@ -826,6 +826,11 @@ pub struct AgentView {
     pub(crate) modal_hovered_key: Option<char>,
     /// Cached server-reported context state.
     pub context_state: Option<xai_grok_shell::session::ContextInfo>,
+    /// Provider-reported cost accumulated from this session's completed turns.
+    /// USD ticks use the wire convention of 1e10 ticks per dollar.
+    pub session_cost_usd_ticks: i64,
+    /// Prompt ids already included in the accumulated session cost.
+    pub(crate) session_cost_prompt_ids: HashSet<String>,
     /// Gateway light-frontend session (`kind: "chat"` / `--chat` / conversation
     /// resume). Suppresses Build credits / local sampler context telemetry so the
     /// status bar and prompt never imply remote usage from wrong metrics.

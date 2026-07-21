@@ -1226,7 +1226,7 @@ pub enum RefreshStrategy {
 
 const MODELS_CACHE_FILE: &str = "models_cache.json";
 const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
-const MODELS_CACHE_SCHEMA_VERSION: u32 = 2;
+const MODELS_CACHE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ModelsCache {
@@ -3420,6 +3420,7 @@ mod tests {
             base_url: "https://test.api/v1".to_owned(),
             name: name.map(|n| n.to_owned()),
             description: None,
+            pricing: None,
             agent_capable: true,
             input_modalities: vec!["text".to_string()],
             supported_parameters: vec!["tools".to_string()],

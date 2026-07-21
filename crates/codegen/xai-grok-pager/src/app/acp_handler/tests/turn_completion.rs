@@ -200,6 +200,37 @@
     }
 
     #[test]
+    fn turn_completed_cost_accumulates_once_per_prompt_live_and_replayed() {
+        let mut app = make_app_with_agent("sess-cost");
+        let id = AgentId(0);
+
+        let _ = handle_ext_notification(
+            &xai_turn_completed_with_cost("sess-cost", "p-1", Some(180_000_000), false),
+            &mut app,
+        );
+        let _ = handle_ext_notification(
+            &xai_turn_completed_with_cost("sess-cost", "p-2", Some(320_000_000), false),
+            &mut app,
+        );
+        let _ = handle_ext_notification(
+            &xai_turn_completed_with_cost("sess-cost", "p-2", Some(320_000_000), false),
+            &mut app,
+        );
+        let _ = handle_ext_notification(
+            &xai_turn_completed_with_cost("sess-cost", "p-missing", None, false),
+            &mut app,
+        );
+        assert_eq!(app.agents[&id].session_cost_usd_ticks, 500_000_000);
+
+        app.agents.get_mut(&id).unwrap().session.loading_replay = true;
+        let _ = handle_ext_notification(
+            &xai_turn_completed_with_cost("sess-cost", "p-3", Some(700_000_000), true),
+            &mut app,
+        );
+        assert_eq!(app.agents[&id].session_cost_usd_ticks, 1_200_000_000);
+    }
+
+    #[test]
     fn live_turn_completed_driver_arms_reconcile() {
         // For the driver the `PromptResponse` RPC owns the lifecycle, so a live
         // TurnCompleted for the turn it is driving arms the lost-RPC reconcile
@@ -1172,4 +1203,3 @@
             "it must not stash onto the running local turn"
         );
     }
-

@@ -30,6 +30,8 @@ impl AgentView {
             self.last_seen_event_id = None;
             self.last_applied_event_seq = None;
             self.last_applied_xai_event_seq = None;
+            self.session_cost_usd_ticks = 0;
+            self.session_cost_prompt_ids.clear();
             self.clear_minimal_btw_lifecycle();
         }
         self.session.session_id = Some(session_id);
@@ -37,6 +39,8 @@ impl AgentView {
     /// Unbind this view from its current session identity.
     pub(crate) fn unbind_session_id(&mut self) {
         if self.session.session_id.take().is_some() {
+            self.session_cost_usd_ticks = 0;
+            self.session_cost_prompt_ids.clear();
             self.clear_minimal_btw_lifecycle();
         }
     }
@@ -98,6 +102,8 @@ impl AgentView {
             modal_buttons: Vec::new(),
             modal_hovered_key: None,
             context_state: None,
+            session_cost_usd_ticks: 0,
+            session_cost_prompt_ids: HashSet::new(),
             chat_kind: false,
             app_chat_mode: false,
             credit_balance: None,
@@ -1362,8 +1368,12 @@ mod status_window_tests {
     #[test]
     fn session_rebind_and_replay_invalidate_minimal_btw() {
         let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        agent.session_cost_usd_ticks = 123;
+        agent.session_cost_prompt_ids.insert("p-1".into());
         let old_request = crate::minimal_api::start_minimal_btw(&mut agent, "old question".into());
         agent.bind_session_id(agent_client_protocol::SessionId::new("s2"));
+        assert_eq!(agent.session_cost_usd_ticks, 0);
+        assert!(agent.session_cost_prompt_ids.is_empty());
         assert!(agent.btw_state.is_none());
         assert!(agent.minimal_btw_lifecycle.is_none());
         assert!(!crate::minimal_api::finish_minimal_btw(

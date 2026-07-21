@@ -3343,6 +3343,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 api_base_url: None,
                 name: m.name,
                 description: m.description,
+                pricing: None,
                 context_window,
                 auto_compact_threshold_percent: m.auto_compact_threshold_percent,
                 system_prompt_label: m.system_prompt_label,
@@ -3395,6 +3396,8 @@ pub struct ModelEntryConfig {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<ModelPricing>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3685,6 +3688,8 @@ pub struct ModelInfo {
     /// to users in either consumer.
     pub name: Option<String>,
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<ModelPricing>,
     pub max_completion_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
@@ -3747,6 +3752,12 @@ pub struct ModelInfo {
     #[serde(default)]
     pub laziness_detector: LazinessDetectorPerModelConfig,
 }
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct ModelPricing {
+    pub prompt: f64,
+    pub completion: f64,
+}
 impl ModelInfo {
     /// Minimal fallback descriptor for an unknown model slug.
     /// Used when a configured model ID isn't found in presets or remote models.
@@ -3759,6 +3770,7 @@ impl ModelInfo {
             base_url: String::new(),
             name: None,
             description: None,
+            pricing: None,
             max_completion_tokens: None,
             temperature: None,
             top_p: None,
@@ -3799,6 +3811,7 @@ impl ModelInfo {
             base_url: entry.base_url.clone(),
             name: entry.name.clone(),
             description: entry.description.clone(),
+            pricing: entry.pricing,
             max_completion_tokens: entry.max_completion_tokens,
             temperature: entry.temperature,
             top_p: entry.top_p,
@@ -4489,6 +4502,7 @@ pub fn resolve_aux_model_sampling_config(
                 base_url: endpoints.resolve_inference_base_url(),
                 name: None,
                 description: None,
+                pricing: None,
                 max_completion_tokens: None,
                 temperature: None,
                 top_p: None,
@@ -4712,6 +4726,7 @@ fn resolve_hidden_default_web_search_sampling_config(
             base_url: endpoints.resolve_inference_base_url(),
             name: None,
             description: None,
+            pricing: None,
             max_completion_tokens: None,
             temperature: None,
             top_p: None,
@@ -4816,6 +4831,9 @@ pub fn to_acp_model_info(
                 );
                 map.insert("provider".to_string(), serde_json::json!("openrouter"));
                 map.insert("modelSlug".to_string(), serde_json::json!(info.model));
+                if let Some(pricing) = info.pricing {
+                    map.insert("pricing".to_string(), serde_json::json!(pricing));
+                }
                 map.insert(
                     "canonicalSlug".to_string(),
                     serde_json::json!(info.canonical_slug),
@@ -5371,6 +5389,7 @@ reasoning_effort = "low"
                 base_url: base_url.to_string(),
                 name: None,
                 description: None,
+                pricing: None,
                 agent_capable: true,
                 input_modalities: vec!["text".to_string()],
                 supported_parameters: vec!["tools".to_string()],
@@ -6394,6 +6413,7 @@ reasoning_effort = "low"
             base_url: "https://test.api/v1".to_string(),
             name: None,
             description: None,
+            pricing: None,
             agent_capable: true,
             input_modalities: vec!["text".to_string()],
             supported_parameters: vec!["tools".to_string()],
@@ -6558,6 +6578,7 @@ reasoning_effort = "low"
             base_url: "https://test.api/v1".to_string(),
             name: None,
             description: None,
+            pricing: None,
             agent_capable: true,
             input_modalities: vec!["text".to_string()],
             supported_parameters: vec!["tools".to_string()],
@@ -7022,6 +7043,7 @@ reasoning_effort = "low"
             base_url: "https://test.api/v1".to_string(),
             name: None,
             description: None,
+            pricing: None,
             agent_capable: true,
             input_modalities: vec!["text".to_string()],
             supported_parameters: vec!["tools".to_string()],
@@ -10541,6 +10563,7 @@ default = "grok-4.5"
                 base_url: "https://test.example.com/v1".to_owned(),
                 name: Some(slug.to_owned()),
                 description: None,
+                pricing: None,
                 agent_capable: true,
                 input_modalities: vec!["text".to_string()],
                 supported_parameters: vec!["tools".to_string()],

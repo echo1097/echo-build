@@ -168,6 +168,53 @@ fn color_to_rgb(c: Color) -> (u8, u8, u8) {
 /// The separator character between status bar items.
 pub const SEPARATOR: &str = "│";
 
+/// Width reserved for the live session cost in the status bar.
+pub const SESSION_COST_WIDTH: usize = 6;
+
+/// Format provider-reported USD ticks into a fixed-width session cost.
+/// Values below one dollar use cents; larger values use compact dollars.
+pub fn fmt_session_cost(cost_usd_ticks: i64) -> String {
+    const USD_TICKS_PER_USD: f64 = 10_000_000_000.0;
+
+    let dollars = cost_usd_ticks.max(0) as f64 / USD_TICKS_PER_USD;
+    let value = if dollars < 1.0 {
+        format!("{:.1}¢", dollars * 100.0)
+    } else if dollars < 999.95 {
+        format!("${dollars:.1}")
+    } else if dollars < 10_000.0 {
+        format!("${:.1}K", dollars / 1_000.0)
+    } else if dollars < 1_000_000.0 {
+        format!("${:.0}K", dollars / 1_000.0)
+    } else if dollars < 10_000_000.0 {
+        format!("${:.1}M", dollars / 1_000_000.0)
+    } else {
+        format!("${:.0}M", dollars / 1_000_000.0)
+    };
+
+    format!("{value:>SESSION_COST_WIDTH$}")
+}
+
+/// Build the fixed-width session cost status item.
+pub fn session_cost_line(
+    cost_usd_ticks: i64,
+    used_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+    theme: &Theme,
+) -> Line<'static> {
+    let color = match (used_tokens, total_tokens.filter(|total| *total > 0)) {
+        (Some(used), Some(total)) => {
+            let pct = xai_token_estimation::usage_percentage(used, total);
+            crate::theme::quantize(blend_color(pct, &default_breakpoints(theme)))
+        }
+        _ => theme.text_primary,
+    };
+
+    Line::from(Span::styled(
+        fmt_session_cost(cost_usd_ticks),
+        Style::default().fg(color).bg(theme.bg_base),
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Context bar line builder
 // ---------------------------------------------------------------------------
@@ -332,6 +379,37 @@ mod tests {
         ] {
             let s = fmt_tokens(n);
             assert!(s.len() <= 4, "fmt_tokens({n}) = {s:?} should be ≤4 chars");
+        }
+    }
+
+    #[test]
+    fn session_cost_formats_cents_dollars_and_compact_totals() {
+        assert_eq!(fmt_session_cost(0), "  0.0¢");
+        assert_eq!(fmt_session_cost(180_000_000), "  1.8¢");
+        assert_eq!(fmt_session_cost(9_990_000_000), " 99.9¢");
+        assert_eq!(fmt_session_cost(10_000_000_000), "  $1.0");
+        assert_eq!(fmt_session_cost(103_000_000_000), " $10.3");
+        assert_eq!(fmt_session_cost(9_999_500_000_000), " $1.0K");
+        assert_eq!(fmt_session_cost(10_300_000_000_000), " $1.0K");
+        assert_eq!(fmt_session_cost(1_030_000_000_000_000), " $103K");
+        assert_eq!(fmt_session_cost(i64::MAX), " $922M");
+    }
+
+    #[test]
+    fn session_cost_always_reserves_six_columns() {
+        for ticks in [
+            i64::MIN,
+            -1,
+            0,
+            180_000_000,
+            9_990_000_000,
+            10_000_000_000,
+            9_999_500_000_000,
+            9_999_000_000_000,
+            i64::MAX,
+        ] {
+            let value = fmt_session_cost(ticks);
+            assert_eq!(value.chars().count(), SESSION_COST_WIDTH, "ticks={ticks}");
         }
     }
 

@@ -872,6 +872,15 @@ pub fn parse_remote_model_value(
                 .unwrap_or_default()
         })
         .unwrap_or_default();
+    let pricing = obj
+        .get("pricing")
+        .and_then(|value| value.as_object())
+        .and_then(|pricing| {
+            Some(crate::agent::config::ModelPricing {
+                prompt: get_f64(pricing, "prompt")?,
+                completion: get_f64(pricing, "completion")?,
+            })
+        });
     Some(crate::agent::config::ModelEntryConfig {
         id,
         model,
@@ -879,6 +888,7 @@ pub fn parse_remote_model_value(
         base_url,
         name,
         description: get_string(obj, "description"),
+        pricing,
         max_completion_tokens: get_u64(obj, "maxCompletionTokens")
             .or_else(|| get_u64(obj, "max_completion_tokens"))
             .and_then(|v| u32::try_from(v).ok()),
@@ -1063,7 +1073,8 @@ fn get_u64(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Optio
     obj.get(key).and_then(|v| v.as_u64())
 }
 fn get_f64(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<f64> {
-    obj.get(key).and_then(|v| v.as_f64())
+    obj.get(key)
+        .and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse().ok()))
 }
 fn get_object<'a>(
     obj: &'a serde_json::Map<String, serde_json::Value>,
@@ -1483,6 +1494,10 @@ mod tests {
             "name": "Claude Test",
             "description": "Representative tool and vision model",
             "context_length": 1_000_000,
+            "pricing": {
+                "prompt": "0.000003",
+                "completion": "0.000015"
+            },
             "architecture": {
                 "input_modalities": ["text", "image"],
                 "output_modalities": ["text"]
@@ -1508,6 +1523,8 @@ mod tests {
         assert_eq!(model.base_url, "https://openrouter.ai/api/v1");
         assert_eq!(model.context_window.get(), 1_000_000);
         assert_eq!(model.max_completion_tokens, None);
+        assert_eq!(model.pricing.unwrap().prompt, 0.000003);
+        assert_eq!(model.pricing.unwrap().completion, 0.000015);
         assert!(model.agent_capable);
         assert_eq!(model.input_modalities, ["text", "image"]);
         assert!(
