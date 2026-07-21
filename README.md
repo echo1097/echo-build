@@ -1,6 +1,6 @@
 # Echo Build (`echo-build`)
 
-**Echo Build** is a SpaceXAI-branded fork for the OpenRouter ecosystem. It is a
+**Echo Build** is a fork of Grok Build by SpaceXAI for the OpenRouter ecosystem. It is a
 full-screen TUI that understands your codebase, edits files, executes shell
 commands, searches the web, and manages long-running tasks — interactively,
 headlessly for scripting/CI, or embedded in editors via the Agent Client
