@@ -69,7 +69,7 @@ impl ModelState {
     pub fn current_model_name(&self) -> Option<String> {
         let current = self.current.as_ref()?;
         if let Some(model_info) = self.available.get(current) {
-            Some(model_info.name.clone())
+            Some(model_display_name(&model_info.name).to_string())
         } else {
             Some(current.0.to_string())
         }
@@ -319,7 +319,7 @@ impl ModelState {
     pub fn display_name_for(&self, id: &acp::ModelId) -> String {
         self.available
             .get(id)
-            .map(|info| info.name.clone())
+            .map(|info| model_display_name(&info.name).to_string())
             .unwrap_or_else(|| id.0.to_string())
     }
 
@@ -335,6 +335,13 @@ impl ModelState {
             Some(self.available.first()?.0.clone())
         }
     }
+}
+
+pub(crate) fn model_display_name(name: &str) -> &str {
+    name.split_once(':')
+        .map(|(_, model_name)| model_name.trim_start())
+        .filter(|model_name| !model_name.is_empty())
+        .unwrap_or(name)
 }
 
 impl From<Option<acp::SessionModelState>> for ModelState {
@@ -388,6 +395,27 @@ mod tests {
     fn test_current_model_name() {
         let state = sample_models();
         assert_eq!(state.current_model_name(), Some("Model A".to_string()));
+    }
+
+    #[test]
+    fn current_model_name_hides_provider_prefix() {
+        let mut state = sample_models();
+        let current = state.current.clone().unwrap();
+        state.available.get_mut(&current).unwrap().name = "DeepSeek: DeepSeek V4 Pro".to_string();
+
+        assert_eq!(
+            state.current_model_name(),
+            Some("DeepSeek V4 Pro".to_string())
+        );
+    }
+
+    #[test]
+    fn display_name_lookup_hides_provider_prefix() {
+        let mut state = sample_models();
+        let current = state.current.clone().unwrap();
+        state.available.get_mut(&current).unwrap().name = "Anthropic:Claude Opus".to_string();
+
+        assert_eq!(state.display_name_for(&current), "Claude Opus");
     }
 
     #[test]

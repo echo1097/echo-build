@@ -5,7 +5,7 @@
 use agent_client_protocol as acp;
 use xai_grok_shell::sampling::types::supports_reasoning_effort_meta;
 
-use crate::acp::model_state::ModelState;
+use crate::acp::model_state::{model_display_name, ModelState};
 use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
 use crate::slash::commands::effort_levels::build_effort_arg_items;
@@ -171,11 +171,12 @@ fn build_model_items(models: &ModelState) -> Vec<ArgItem> {
             .map(format_context_window)
             .unwrap_or_else(|| "unknown ctx".to_string());
         let capability = if agent_capable { "Agent" } else { "Chat only" };
+        let model_name = model_display_name(&info.name);
 
         let display = if is_current {
-            format!("{}  [{capability}]  {context}  (current)", info.name)
+            format!("{model_name}  [{capability}]  {context}  (current)")
         } else {
-            format!("{}  [{capability}]  {context}", info.name)
+            format!("{model_name}  [{capability}]  {context}")
         };
 
         // Trailing space on reasoning models: signals "more input
@@ -351,6 +352,18 @@ mod tests {
         assert!(items[1].display.contains("[Agent]"));
         assert!(items[1].display.contains("128K ctx"));
         assert!(items[2].display.contains("1M ctx"));
+    }
+
+    #[test]
+    fn model_picker_hides_provider_prefix() {
+        let mut state = ModelState::default();
+        let (id, info) = plain_model("deepseek/deepseek-v4", "DeepSeek: DeepSeek V4 Pro");
+        state.available.insert(id, info);
+
+        let items = build_model_items(&state);
+
+        assert!(items[0].display.starts_with("DeepSeek V4 Pro"));
+        assert!(!items[0].display.contains("DeepSeek:"));
     }
 
     #[test]

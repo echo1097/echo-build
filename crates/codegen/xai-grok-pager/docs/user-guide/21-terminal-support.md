@@ -102,18 +102,18 @@ Grok writes to the clipboard through up to three routes, shown in the **Clipboar
 
 **SSH and selected text**: a remote Grok process usually cannot read the local terminal's PRIMARY or CLIPBOARD selection. Use terminal-native `Shift+Insert`, or hold `Shift` while middle-clicking when your terminal uses that gesture to bypass mouse reporting. The terminal then sends the local selection through the PTY instead of asking the remote process to access it.
 
-**Unknown terminals over SSH**: when Grok cannot identify the outer terminal, it sends the copy but reports delivery as unverified. If paste fails, reconnect with `grok wrap <ssh command>` or use `/minimal`.
+**Unknown terminals over SSH**: when Grok cannot identify the outer terminal, it sends the copy but reports delivery as unverified. If paste fails, reconnect with `echo-build wrap <ssh command>` or use `/minimal`.
 
 **Known limitation — Apple Terminal + SSH**:
-Apple Terminal ignores OSC 52, so copying from a Grok session over SSH can't reach your local clipboard. Grok writes every in-app copy to a backup file (`~/.grok/last-copy.txt`, override with `GROK_COPY_FILE`) and the toast names the path — so you can `cat`/`scp` it. You can also target a file explicitly with `/copy out.txt` or `/copy 2 ~/reply.md`. For native drag-select copy (terminal selection → local clipboard), turn mouse capture off with `/toggle-mouse-reporting` (opt-in feature) or run `grok --minimal`.
+Apple Terminal ignores OSC 52, so copying from a Grok session over SSH can't reach your local clipboard. Grok writes every in-app copy to a backup file (`~/.grok/last-copy.txt`, override with `GROK_COPY_FILE`) and the toast names the path — so you can `cat`/`scp` it. You can also target a file explicitly with `/copy out.txt` or `/copy 2 ~/reply.md`. For native drag-select copy (terminal selection → local clipboard), turn mouse capture off with `/toggle-mouse-reporting` (opt-in feature) or run `echo-build --minimal`.
 
-**Optional workaround for live clipboard**: Use `grok wrap ssh` instead of plain `ssh` (for example, `grok wrap ssh user@host`). It runs the command in a local PTY that intercepts OSC 52 sequences, including tmux-wrapped ones, and writes their contents to your local clipboard. The same command wraps anything else whose clipboard can't reach you — for example `grok wrap docker exec -it <container> bash` or `grok wrap kubectl exec -it <pod> -- bash`.
+**Optional workaround for live clipboard**: Use `echo-build wrap ssh` instead of plain `ssh` (for example, `echo-build wrap ssh user@host`). It runs the command in a local PTY that intercepts OSC 52 sequences, including tmux-wrapped ones, and writes their contents to your local clipboard. The same command wraps anything else whose clipboard can't reach you — for example `echo-build wrap docker exec -it <container> bash` or `echo-build wrap kubectl exec -it <pod> -- bash`.
 
-`grok wrap` also protects your local terminal from dirty disconnects: if the wrapped command dies while a remote TUI has mouse reporting, the alternate screen, or similar modes enabled (for example the SSH connection drops mid-session), wrap resets those modes on exit instead of leaving the terminal spraying mouse escape codes.
+`echo-build wrap` also protects your local terminal from dirty disconnects: if the wrapped command dies while a remote TUI has mouse reporting, the alternate screen, or similar modes enabled (for example the SSH connection drops mid-session), wrap resets those modes on exit instead of leaving the terminal spraying mouse escape codes.
 
-When Grok starts inside an SSH session that isn't already running under `grok wrap`, a one-time contextual tip above the prompt recommends `grok wrap ssh <host>` (it stops appearing on its own once you launch through wrap). To turn it off, set `ssh_wrap = false` under `[ui.contextual_hints]` in `~/.grok/config.toml`, or use `/settings` → **Show contextual hints** → **SSH wrap**.
+When Grok starts inside an SSH session that isn't already running under `echo-build wrap`, a one-time contextual tip above the prompt recommends `echo-build wrap ssh <host>` (it stops appearing on its own once you launch through wrap). To turn it off, set `ssh_wrap = false` under `[ui.contextual_hints]` in `~/.grok/config.toml`, or use `/settings` → **Show contextual hints** → **SSH wrap**.
 
-> **Warning**: `grok wrap` is **experimental** and may misbehave in some setups.
+> **Warning**: `echo-build wrap` is **experimental** and may misbehave in some setups.
 
 **iTerm2 setting**:
 iTerm2 requires explicit permission for OSC 52:
@@ -165,7 +165,7 @@ Add this after `config = wezterm.config_builder()` in `~/.config/wezterm/wezterm
 config.enable_kitty_keyboard = true
 ```
 
-Reload (`Cmd+Shift+R` or restart WezTerm) and restart `grok`.
+Reload (`Cmd+Shift+R` or restart WezTerm) and restart `echo-build`.
 
 **Verify**: Run `/terminal-setup` inside Grok. While a turn is active, you see the interject hint, and `Ctrl+Enter` interjects.
 

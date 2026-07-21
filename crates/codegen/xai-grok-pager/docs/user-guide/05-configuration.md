@@ -170,7 +170,7 @@ navigation, while `simple_mode` controls editing in the prompt.
 #### Screen Mode
 
 The `screen_mode` setting under `[ui]` is the **default render mode** for plain
-`grok` launches. Configure it from `/settings` → **Default screen mode**
+`echo-build` launches. Configure it from `/settings` → **Default screen mode**
 (restart required), or edit `config.toml` by hand. Both choices write
 `config.toml`. CLI flags (`--minimal` / `--fullscreen`) and slash commands
 (`/minimal` / `/fullscreen`) are session-scoped and do **not** write this key —
@@ -413,7 +413,7 @@ Each cell can be toggled via environment variable or `config.toml`. See the
 environment-variables reference for the env var names. Resolution order:
 env var > config.toml > default (on).
 
-`grok inspect` reports cells that still need session-start resolution as
+`echo-build inspect` reports cells that still need session-start resolution as
 `?` until a value is available; cells with an explicit env or TOML value
 use that value. Affected discovery entries report
 `compatibilityStatus: "unresolved"` in JSON and `[compat unresolved]` in

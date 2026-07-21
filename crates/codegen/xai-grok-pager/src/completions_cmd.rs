@@ -87,7 +87,7 @@ mod tests {
 
     // The optional `[PROMPT]` positional (app/cli.rs) makes clap_complete emit
     // a `::prompt` slot before the subcommand slot and dispatch on `$line[2]`,
-    // so `grok worktree <TAB>` re-offered every top-level command (upstream
+    // so `echo-build worktree <TAB>` re-offered every top-level command (upstream
     // clap-rs/clap#6282).
     #[test]
     fn zsh_completions_drop_prompt_slot_and_dispatch_on_line_1() {

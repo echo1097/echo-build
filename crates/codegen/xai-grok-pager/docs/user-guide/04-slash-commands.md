@@ -217,7 +217,7 @@ fullscreen) switches to the experimental scrollback-native mode; `/fullscreen`
 TUI. Both relaunch the pager on the same conversation for this session only —
 they do not write `config.toml`. Descriptions and the relaunch banner tell you
 how to switch back (`/fullscreen` ⇄ `/minimal`). The `--minimal` /
-`--fullscreen` CLI flags are likewise session-scoped. To make plain `grok` open
+`--fullscreen` CLI flags are likewise session-scoped. To make plain `echo-build` open
 in a given mode by default, use `/settings` → **Default screen mode**, or set
 `[ui] screen_mode` in `config.toml`.
 

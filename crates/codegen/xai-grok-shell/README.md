@@ -11,13 +11,13 @@ Use it interactively as a TUI, or integrate it into your own apps via headless m
 curl -fsSL https://x.ai/cli/install.sh | bash
 
 # Interactive TUI
-grok
+echo-build
 
 # Headless (for scripts/automation)
-grok -p "Explain this codebase"
+echo-build -p "Explain this codebase"
 
 # Agent mode (for IDE/app integration)
-grok agent stdio
+echo-build agent stdio
 ```
 
 ## Contents
@@ -44,7 +44,7 @@ grok agent stdio
   - [Memory](#memory) — cross-session knowledge persistence
   - [Sandbox](#sandbox) — OS-level filesystem/network isolation
 - **Reference**
-  - [Introspection (`grok inspect`)](#introspection)
+  - [Introspection (`echo-build inspect`)](#introspection)
   - [Claude Code Compatibility](#claude-code-compatibility)
   - [Built-in Tools](#built-in-tools)
   - [Session Persistence](#session-persistence) — storage layout, resume
@@ -68,13 +68,13 @@ curl -fsSL https://x.ai/cli/install.sh | bash -s 0.1.42
 Verify installation:
 
 ```bash
-grok --version
+echo-build --version
 ```
 
 Update to the latest version:
 
 ```bash
-grok update
+echo-build update
 ```
 
 ---
@@ -86,7 +86,7 @@ grok update
 On first launch, Grok opens your browser to authenticate with grok.com:
 
 ```bash
-grok
+echo-build
 ```
 
 Credentials are stored in `~/.grok/auth.json` and persist across sessions. Tokens expire after 7 days; Grok will prompt you to re-authenticate when needed.
@@ -96,7 +96,7 @@ Credentials are stored in `~/.grok/auth.json` and persist across sessions. Token
 To switch accounts or fix authentication issues:
 
 ```bash
-grok login
+echo-build login
 ```
 
 ### API Key
@@ -105,7 +105,7 @@ For CI/CD, automation, or environments without browser access, use an API key fr
 
 ```bash
 export XAI_API_KEY="xai-..."
-grok
+echo-build
 ```
 
 The API key takes precedence over browser credentials.
@@ -139,7 +139,7 @@ Customers typically also override the API endpoint to point at their own proxy:
 export GROK_CLI_CHAT_PROXY_BASE_URL="https://grok-proxy.acme.com/v1"
 ```
 
-**3. Run `grok`.** The CLI discovers endpoints via `{issuer}/.well-known/openid-configuration`, opens the IdP login page, and stores tokens in `~/.grok/auth.json`. The OIDC token is sent as `Authorization: Bearer` to the configured proxy. Tokens auto-refresh silently via the stored `refresh_token`.
+**3. Run `echo-build`.** The CLI discovers endpoints via `{issuer}/.well-known/openid-configuration`, opens the IdP login page, and stores tokens in `~/.grok/auth.json`. The OIDC token is sent as `Authorization: Bearer` to the configured proxy. Tokens auto-refresh silently via the stored `refresh_token`.
 
 **Optional fields:**
 
@@ -234,7 +234,7 @@ If your binary outputs a bare token string (not JSON with `expires_in`), set `au
 
 The command is run via `sh -c`, so it can be a binary path, a shell script, or a pipeline.
 
-When `auth_provider_label` is set, the TUI welcome screen shows **"Login with Acme Corp"** instead of "Login with grok.com". In headless mode (`grok -p`), the label has no effect — stderr from your binary is printed directly to the terminal.
+When `auth_provider_label` is set, the TUI welcome screen shows **"Login with Acme Corp"** instead of "Login with grok.com". In headless mode (`echo-build -p`), the label has no effect — stderr from your binary is printed directly to the terminal.
 
 > **Enterprise setup:** For a complete enterprise `config.toml` combining external auth, corporate proxy, and telemetry settings, see [Enterprise Deployment](#enterprise-deployment) in the Configuration section.
 
@@ -311,7 +311,7 @@ export GROK_AUTH_EARLY_INVALIDATION_SECS=300
 ```
 
 **Keep in mind:**
-- When using `auth_provider_command`, you don't need to run `grok login` before starting — Grok runs your binary automatically on first launch. You _can_ run `grok login` to explicitly hydrate `auth.json` ahead of time if you prefer.
+- When using `auth_provider_command`, you don't need to run `echo-build login` before starting — Grok runs your binary automatically on first launch. You _can_ run `echo-build login` to explicitly hydrate `auth.json` ahead of time if you prefer.
 - If both OIDC and `auth_provider_command` are configured: at **login** time, Grok tries OIDC silent refresh first (if a `refresh_token` exists), then the external binary, then browser-based login. During a **session**, whichever method is configured is used exclusively — if `auth_provider_command` is set it handles all mid-session refreshes; otherwise OIDC silent refresh is used.
 - Your binary's stderr output is displayed to the user but interactive stdin is not supported. This works well for browser-based SSO flows where the binary displays a URL and you complete authentication in the browser.
 
@@ -320,7 +320,7 @@ export GROK_AUTH_EARLY_INVALIDATION_SECS=300
 Enable debug logging to trace the auth flow:
 
 ```bash
-grok --debug-file /tmp/grok-auth.log -p "hello"
+echo-build --debug-file /tmp/grok-auth.log -p "hello"
 tail -f /tmp/grok-auth.log
 ```
 
@@ -336,7 +336,7 @@ Common log messages:
 
 ### Using auth.json for API Access
 
-If you've authenticated with `grok login`, you can use the stored credentials to call the CLI chat proxy directly via curl. The proxy requires specific headers that mirror what the grok CLI sends internally:
+If you've authenticated with `echo-build login`, you can use the stored credentials to call the CLI chat proxy directly via curl. The proxy requires specific headers that mirror what the Echo Build CLI sends internally:
 
 ```bash
 curl -s -N -X POST "https://cli-chat-proxy.grok.com/v1/chat/completions" \
@@ -355,7 +355,7 @@ curl -s -N -X POST "https://cli-chat-proxy.grok.com/v1/chat/completions" \
 
 | Header                           | Required | Purpose                                                                                                                                                                                   |
 | -------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Authorization: Bearer <token>`  | Yes      | Session token from `~/.grok/auth.json` (set by `grok login`)                                                                                                                              |
+| `Authorization: Bearer <token>`  | Yes      | Session token from `~/.grok/auth.json` (set by `echo-build login`)                                                                                                                              |
 | `X-XAI-Token-Auth: xai-grok-cli` | Yes      | Tells the auth middleware to validate as a CLI session token                                                                                                                              |
 | `x-grok-model-override: <model>` | Yes\*    | The proxy uses this header (not the JSON body) to route to the correct backend. \*Can be omitted for `grok-build` which is on the default route, but always safe to include. |
 
@@ -367,7 +367,7 @@ Most models behind the proxy only support streaming. Always use `"stream": true`
 | --------------------- | -------------- | ------------ |
 | `grok-build`    | ✅ Supported   | ✅ Supported |
 
-> **Note:** `auth.json` tokens expire after 7 days. Run `grok login` to refresh.
+> **Note:** `auth.json` tokens expire after 7 days. Run `echo-build login` to refresh.
 
 ---
 
@@ -378,7 +378,7 @@ The TUI (Terminal User Interface) provides a full interactive coding environment
 ### Launch
 
 ```bash
-grok [OPTIONS]
+echo-build [OPTIONS]
 ```
 
 ### Options
@@ -404,16 +404,16 @@ grok [OPTIONS]
 
 ```bash
 # Start in a specific project
-grok --cwd ~/projects/my-app
+echo-build --cwd ~/projects/my-app
 
 # Start with an initial task
-grok --prompt "Review this codebase and suggest improvements"
+echo-build --prompt "Review this codebase and suggest improvements"
 
 # Add project-specific rules
-grok --rules "Always use TypeScript. Prefer functional components."
+echo-build --rules "Always use TypeScript. Prefer functional components."
 
 # Auto-approve mode for trusted tasks
-grok --always-approve --prompt "Format all files"
+echo-build --always-approve --prompt "Format all files"
 ```
 
 ### Keyboard Shortcuts
@@ -511,7 +511,7 @@ Headless mode accepts a single prompt, executes it with full tool access, and re
 ### Basic Usage
 
 ```bash
-grok -p "Your prompt here"
+echo-build -p "Your prompt here"
 ```
 
 ### Options
@@ -555,13 +555,13 @@ Tool names correspond to the internal tool IDs shown below. For quick reference:
 
 ```bash
 # Only allow read-only tools
-grok -p "Explain this codebase" --tools "read_file,grep,list_dir"
+echo-build -p "Explain this codebase" --tools "read_file,grep,list_dir"
 
 # Remove web access and file editing
-grok -p "Review this code" --disallowed-tools "web_search,web_fetch,search_replace"
+echo-build -p "Review this code" --disallowed-tools "web_search,web_fetch,search_replace"
 
 # Remove shell access
-grok -p "Review this code" --disallowed-tools "run_terminal_cmd"
+echo-build -p "Review this code" --disallowed-tools "run_terminal_cmd"
 ```
 
 `--disallowed-tools` also supports special `Agent` entries to control subagent spawning:
@@ -574,10 +574,10 @@ grok -p "Review this code" --disallowed-tools "run_terminal_cmd"
 
 ```bash
 # Allow tools but prevent the agent from spawning any subagents
-grok -p "Fix this bug" --disallowed-tools "Agent"
+echo-build -p "Fix this bug" --disallowed-tools "Agent"
 
 # Block only the explore subagent
-grok -p "Refactor this module" --disallowed-tools "Agent(explore)"
+echo-build -p "Refactor this module" --disallowed-tools "Agent(explore)"
 ```
 
 When `--tools` is set, only the listed tools are available and default tool injection is disabled. When both flags are present, `--disallowed-tools` runs after `--tools` — use this to start from an allowlist and then remove specific entries.
@@ -604,19 +604,19 @@ Glob patterns support `*` (single-level wildcard) and `**` (recursive). A bare p
 
 ```bash
 # Deny all shell commands matching "rm*"
-grok -p "Clean up this project" --deny "Bash(rm*)"
+echo-build -p "Clean up this project" --deny "Bash(rm*)"
 
 # Allow npm commands, deny everything else dangerous
-grok -p "Set up the project" --allow "Bash(npm*)" --deny "Bash(sudo*)"
+echo-build -p "Set up the project" --allow "Bash(npm*)" --deny "Bash(sudo*)"
 
 # Deny edits outside src/
-grok -p "Refactor the code" --deny "Edit(/etc/**)"
+echo-build -p "Refactor the code" --deny "Edit(/etc/**)"
 
 # Allow all bash commands (auto-approve without prompting)
-grok -p "Build the project" --allow "Bash"
+echo-build -p "Build the project" --allow "Bash"
 
 # Combine: allow fetching docs sites, deny other URLs
-grok --allow "WebFetch(domain:docs.rs)" --deny "WebFetch(*)"
+echo-build --allow "WebFetch(domain:docs.rs)" --deny "WebFetch(*)"
 ```
 
 `--allow` and `--deny` can be repeated to add multiple rules. Deny rules take precedence over allow rules. These flags work in both TUI and headless mode.
@@ -625,26 +625,26 @@ grok --allow "WebFetch(domain:docs.rs)" --deny "WebFetch(*)"
 
 ```bash
 # Simple question
-grok -p "What does this project do?"
+echo-build -p "What does this project do?"
 
 # Use a specific model
-grok -p "Optimize this function" -m grok-build
+echo-build -p "Optimize this function" -m grok-build
 
 # Get JSON output for parsing
-grok -p "List all TODO comments in the codebase" --output-format json
+echo-build -p "List all TODO comments in the codebase" --output-format json
 
 # Streaming JSON for real-time processing
-grok -p "Explain the architecture" --output-format streaming-json
+echo-build -p "Explain the architecture" --output-format streaming-json
 
 # Multi-turn conversation (session ID is returned in JSON output)
-grok -p "Remember: the secret number is 42" --output-format json
-grok -p "What's the secret number?" --resume <sessionId>
+echo-build -p "Remember: the secret number is 42" --output-format json
+echo-build -p "What's the secret number?" --resume <sessionId>
 
 # Resume most recent session
-grok -p "Continue where we left off" -c
+echo-build -p "Continue where we left off" -c
 
 # Run in a different directory
-grok -p "Run the tests" --cwd ~/projects/other-app --always-approve
+echo-build -p "Run the tests" --cwd ~/projects/other-app --always-approve
 ```
 
 ### Scripting with Named Sessions
@@ -653,10 +653,10 @@ For CI and automation, `-s/--session-id` lets you choose your own session ID:
 
 ```bash
 # Start a session namespaced to a PR
-grok -p "Review the changes in this PR" -s "critique-myrepo-pr-123"
+echo-build -p "Review the changes in this PR" -s "critique-myrepo-pr-123"
 
 # Continue in the same session
-grok -p "Now check for security issues" -s "critique-myrepo-pr-123"
+echo-build -p "Now check for security issues" -s "critique-myrepo-pr-123"
 ```
 
 If the session exists it picks up where you left off; if not, a new one is created.
@@ -697,25 +697,25 @@ Here's a summary of the codebase...
 
 ```bash
 # Pipe output to a file
-grok -p "Generate a README" > README.md
+echo-build -p "Generate a README" > README.md
 
 # Parse JSON output with jq
-grok -p "List files" --output-format json | jq -r '.text'
+echo-build -p "List files" --output-format json | jq -r '.text'
 
 # CI/CD: automated code review
-grok -p "Review changes for bugs and security issues." \
+echo-build -p "Review changes for bugs and security issues." \
   --output-format json --always-approve | jq -r '.text' > review.md
 
 # Pipeline: chain with other tools
-git diff --staged | grok -p "Write a concise commit message for these changes"
+git diff --staged | echo-build -p "Write a concise commit message for these changes"
 
 # Batch: process multiple files
 for file in src/*.js; do
-  grok -p "Migrate $file from CommonJS to ES modules." --always-approve
+  echo-build -p "Migrate $file from CommonJS to ES modules." --always-approve
 done
 
 # Pre-commit hook
-grok -p "Review staged changes for obvious bugs. Reply OK if fine, or list issues." \
+echo-build -p "Review staged changes for obvious bugs. Reply OK if fine, or list issues." \
   --always-approve --output-format json | jq -r '.text' | grep -q "^OK" || exit 1
 ```
 
@@ -732,7 +732,7 @@ Run Grok as an ACP (Agent Client Protocol) agent for integration with IDEs, edit
 For direct integration with ACP clients:
 
 ```bash
-grok agent stdio
+echo-build agent stdio
 ```
 
 Communication happens via JSON-RPC over stdin/stdout. This mode is used by:
@@ -755,7 +755,7 @@ Communication happens via JSON-RPC over stdin/stdout. This mode is used by:
 To expose the agent over the internet (instead of local network), run a WebSocket relay server and have the agent connect to it:
 
 ```bash
-grok agent headless --grok-ws-url wss://your-relay.example.com/ws
+echo-build agent headless --grok-ws-url wss://your-relay.example.com/ws
 ```
 
 The agent connects OUT to your relay, and your web clients connect to the same relay. Useful for building web UIs where browsers can't spawn local processes.
@@ -764,23 +764,23 @@ The agent connects OUT to your relay, and your web clients connect to the same r
 
 ---
 
-## SSH Passthrough (`grok ssh`)
+## SSH Passthrough (`echo-build ssh`)
 
-Use `grok ssh` instead of plain `ssh` when connecting to remote hosts in terminals that lack native support (e.g. Apple Terminal) for local OSC 52 clipboard interception.
+Use `echo-build ssh` instead of plain `ssh` when connecting to remote hosts in terminals that lack native support (e.g. Apple Terminal) for local OSC 52 clipboard interception.
 
 ```bash
 # Basic usage (same args as ssh)
-grok ssh user@host
+echo-build ssh user@host
 
 # With SSH flags
-grok ssh -t user@host
-grok ssh -L 8080:localhost:8080 user@host
+echo-build ssh -t user@host
+echo-build ssh -L 8080:localhost:8080 user@host
 
 # With remote command
-grok ssh user@host -- tmux attach
+echo-build ssh user@host -- tmux attach
 ```
 
-On macOS, if the terminal doesn't natively handle OSC 52, `grok ssh` runs SSH inside a local PTY that intercepts clipboard sequences and writes them to `pbcopy`. Both plain OSC 52 and tmux DCS passthrough are handled. Terminals with native OSC 52 (iTerm2, Ghostty, Kitty, WezTerm, Alacritty) get a plain `ssh` exec with no wrapper.
+On macOS, if the terminal doesn't natively handle OSC 52, `echo-build ssh` runs SSH inside a local PTY that intercepts clipboard sequences and writes them to `pbcopy`. Both plain OSC 52 and tmux DCS passthrough are handled. Terminals with native OSC 52 (iTerm2, Ghostty, Kitty, WezTerm, Alacritty) get a plain `ssh` exec with no wrapper.
 
 This runs entirely locally.
 
@@ -799,7 +799,7 @@ Grok can be used as an OpenAI-compatible chat completion backend. Choose between
 
 ### Headless Mode (Simple Chat Completion)
 
-Use headless mode for simple integrations. Spawns `grok -p` and parses JSON output.
+Use headless mode for simple integrations. Spawns `echo-build -p` and parses JSON output.
 
 #### Python - Headless
 
@@ -816,7 +816,7 @@ class GrokChat:
         self.env = {**os.environ}
 
     def _build_cmd(self, prompt, model, stream):
-        return ["grok", "-p", prompt, "-m", model, "--cwd", self.cwd,
+        return ["echo-build", "-p", prompt, "-m", model, "--cwd", self.cwd,
                 "--output-format", "streaming-json" if stream else "json", "--always-approve"]
 
     async def create(self, messages, model="grok-build", stream=False):
@@ -905,7 +905,7 @@ class GrokChat {
     if (stream) return this.streamResponse(prompt, model);
 
     const { stdout } = await execa(
-      "grok",
+      "echo-build",
       this.buildArgs(prompt, model, false),
     );
     const data = JSON.parse(stdout || '{"text":""}');
@@ -920,7 +920,7 @@ class GrokChat {
   }
 
   async *streamResponse(prompt: string, model: string) {
-    const proc = execa("grok", this.buildArgs(prompt, model, true));
+    const proc = execa("echo-build", this.buildArgs(prompt, model, true));
     for await (const chunk of proc.stdout!) {
       for (const line of chunk.toString().split("\n").filter(Boolean)) {
         const event = JSON.parse(line);
@@ -974,7 +974,7 @@ class GrokACPChat:
 
     async def init(self):
         self.proc = await asyncio.create_subprocess_exec(
-            "grok", "agent", "stdio",
+            "echo-build", "agent", "stdio",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE
         )
@@ -1099,7 +1099,7 @@ class GrokACPChat {
   constructor(private cwd = ".") {}
 
   async init() {
-    this.proc = spawn("grok", ["agent", "stdio"]);
+    this.proc = spawn("echo-build", ["agent", "stdio"]);
     this.rl = readline.createInterface({ input: this.proc.stdout! });
 
     // Initialize
@@ -1234,7 +1234,7 @@ Grok implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.co
 └──────────────────┬──────────────────────┘
                    │ JSON-RPC over stdio
 ┌──────────────────▼──────────────────────┐
-│           grok agent stdio              │
+│           echo-build agent stdio              │
 │                                         │
 │  ┌─────────┐  ┌─────────┐  ┌─────────┐  │
 │  │ Session │  │  Tools  │  │   MCP   │  │
@@ -1363,7 +1363,7 @@ Having an `lsp.json` file is enough for passive diagnostics. The model-visible `
 Enable the tool for one run:
 
 ```bash
-GROK_LSP_TOOLS=1 grok
+GROK_LSP_TOOLS=1 echo-build
 ```
 
 Or enable it in config:
@@ -1463,7 +1463,7 @@ telemetry = false
 timeout_secs = 120.0
 ```
 
-With this config, `grok` runs your auth binary, stores the token, and routes inference through your corporate proxy. See [Authentication](#authentication) for full auth setup details.
+With this config, `echo-build` runs your auth binary, stores the token, and routes inference through your corporate proxy. See [Authentication](#authentication) for full auth setup details.
 
 ---
 
@@ -1591,7 +1591,7 @@ name = "my-custom-agent"             # Discovered by name
 ```
 
 ```bash
-grok --agent-profile ./my-agent.md
+echo-build --agent-profile ./my-agent.md
 # or
 export GROK_AGENT="my-custom-agent"
 ```
@@ -1743,7 +1743,7 @@ api_key = "sk-custom"
 
 > **Overriding with a custom model:** Setting `[models] web_search` alone is not
 > enough if the model isn't already in the catalog (built-in defaults or
-> `grok models` output). You also need a `[model.*]` entry so Grok knows
+> `echo-build models` output). You also need a `[model.*]` entry so Grok knows
 > how to reach it. Without both, web search is silently disabled.
 >
 > ```toml
@@ -1801,13 +1801,13 @@ env_key = "OPENAI_API_KEY"
 
 ```bash
 # List available models (including custom)
-grok models
+echo-build models
 
 # Use in TUI via slash command
 /model my-model
 
 # Use in headless mode
-grok -p "Hello" -m my-model
+echo-build -p "Hello" -m my-model
 
 # Set as default
 # In config.toml:
@@ -1832,7 +1832,7 @@ Point Grok at a custom OpenAI-compatible `/v1/models` endpoint instead of the de
 ```bash
 export GROK_MODELS_BASE_URL="https://api.acme.com/v1"
 export XAI_API_KEY="xai-..."
-grok
+echo-build
 ```
 
 Grok fetches the model list from `{GROK_MODELS_BASE_URL}/models` on startup and sends inference requests to `GROK_MODELS_BASE_URL`. This follows the standard OpenAI-compatible convention used by OpenAI, Anthropic, OpenRouter, Groq, Together.ai, and others.
@@ -1852,7 +1852,7 @@ api_key = "my-api-key"
 
 When using `[endpoints]` with partial model overrides, the `base_url` is inherited from the endpoints config — you don't need to specify it in each `[model.*]` section.
 
-**Auth behavior:** When `models_base_url` is set, Grok uses API key auth (`Authorization: Bearer`) instead of session auth. `grok login` is not required — only the API key.
+**Auth behavior:** When `models_base_url` is set, Grok uses API key auth (`Authorization: Bearer`) instead of session auth. `echo-build login` is not required — only the API key.
 
 ---
 
@@ -1994,11 +1994,11 @@ An SQLite index enables fast hybrid search (FTS5 keyword + optional vector KNN) 
 
 ```bash
 # Per-session flag
-grok --experimental-memory
+echo-build --experimental-memory
 
 # Environment variable (persists for the shell session)
 export GROK_MEMORY=1
-grok
+echo-build
 
 # Config file (persists permanently)
 # ~/.grok/config.toml
@@ -2057,13 +2057,13 @@ Read my workspace MEMORY.md
 
 ```bash
 # Open workspace MEMORY.md in $EDITOR / $VISUAL
-grok memory edit
+echo-build memory edit
 
 # Open global MEMORY.md
-grok memory edit --global
+echo-build memory edit --global
 
 # Show memory statistics: file count, chunk count, and index size
-grok memory stats
+echo-build memory stats
 ```
 
 ### Configuration reference
@@ -2102,13 +2102,13 @@ Seatbelt on macOS). This is off by default.
 
 ```bash
 # Run with workspace sandbox (read everywhere, write only to CWD + /tmp)
-grok --sandbox workspace
+echo-build --sandbox workspace
 
 # Read-only mode (agent can read but not write anything)
-grok --sandbox read-only
+echo-build --sandbox read-only
 
 # Maximum isolation (read/write CWD only, no child network)
-grok --sandbox strict
+echo-build --sandbox strict
 ```
 
 ### Built-in Profiles
@@ -2146,12 +2146,12 @@ deny = ["/data/shared-secrets"]
 Use it:
 
 ```bash
-grok --sandbox devbox
+echo-build --sandbox devbox
 ```
 
 ### How It Works
 
-The sandbox is applied to the **entire grok process** at startup using kernel
+The sandbox is applied to the **entire echo-build process** at startup using kernel
 primitives — not per-command wrapping. This means all tool operations are
 covered:
 
@@ -2184,11 +2184,11 @@ for telemetry and debugging.
 
 ## Introspection
 
-Use `grok inspect` to see everything Grok discovers in the current directory:
+Use `echo-build inspect` to see everything Grok discovers in the current directory:
 
 ```bash
-grok inspect          # human-readable output
-grok inspect --json   # machine-readable JSON
+echo-build inspect          # human-readable output
+echo-build inspect --json   # machine-readable JSON
 ```
 
 The output shows all loaded configuration organized by type:
@@ -2317,23 +2317,23 @@ Control session behavior with flags:
 
 ```bash
 # New session each time (default)
-grok -p "Hello"
+echo-build -p "Hello"
 
 # Create or resume a named session
-grok -p "Remember: X=42" -s my-session
-grok -p "What is X?" -s my-session
+echo-build -p "Remember: X=42" -s my-session
+echo-build -p "What is X?" -s my-session
 
 # Resume existing session (errors if not found)
-grok -p "Continue" -r my-session
+echo-build -p "Continue" -r my-session
 
 # Continue most recent session in current directory
-grok -p "What were we doing?" -c
+echo-build -p "What were we doing?" -c
 ```
 
 Session ID is returned in JSON output:
 
 ```bash
-grok -p "Hello" --output-format json | jq -r '.sessionId'
+echo-build -p "Hello" --output-format json | jq -r '.sessionId'
 ```
 
 ### Agent stdio (ACP)
@@ -2413,7 +2413,7 @@ The agent persists all session updates automatically. Clients can reconnect and 
 
 ## Shell Completions
 
-Generate completions for your shell and install them to enable tab completion for `grok` commands and flags.
+Generate completions for your shell and install them to enable tab completion for `echo-build` commands and flags.
 
 **Note:** The paths below are recommended defaults. Some environments do not automatically source the standard locations — you may need to adapt them to your shell framework or distro conventions.
 
@@ -2423,7 +2423,7 @@ Generate and install:
 
 ```bash
 mkdir -p ~/.local/share/bash-completion/completions
-grok completions bash > ~/.local/share/bash-completion/completions/grok
+echo-build completions bash > ~/.local/share/bash-completion/completions/echo-build
 ```
 
 Reload your shell or run `source ~/.bashrc`.
@@ -2432,13 +2432,13 @@ Alternative (Grok-managed location):
 
 ```bash
 mkdir -p ~/.grok/completions/bash
-grok completions bash > ~/.grok/completions/bash/grok.bash
+echo-build completions bash > ~/.grok/completions/bash/echo-build.bash
 ```
 
 Add to `~/.bashrc`:
 
 ```bash
-[[ -r "$HOME/.grok/completions/bash/grok.bash" ]] && source "$HOME/.grok/completions/bash/grok.bash"
+[[ -r "$HOME/.grok/completions/bash/echo-build.bash" ]] && source "$HOME/.grok/completions/bash/echo-build.bash"
 ```
 
 ### Zsh
@@ -2447,7 +2447,7 @@ Generate and install:
 
 ```bash
 mkdir -p ~/.zsh/completions
-grok completions zsh > ~/.zsh/completions/_grok
+echo-build completions zsh > ~/.zsh/completions/_echo-build
 ```
 
 Add to `~/.zshrc`:
@@ -2462,7 +2462,7 @@ Alternative (Grok-managed location):
 
 ```bash
 mkdir -p ~/.grok/completions/zsh
-grok completions zsh > ~/.grok/completions/zsh/_grok
+echo-build completions zsh > ~/.grok/completions/zsh/_echo-build
 ```
 
 Add to `~/.zshrc`:
@@ -2475,7 +2475,7 @@ compinit
 
 ### After Upgrading
 
-Regenerate completions after upgrading `grok` — the script reflects the CLI of the installed version.
+Regenerate completions after upgrading `echo-build` — the script reflects the CLI of the installed version.
 
 ---
 
@@ -2483,14 +2483,14 @@ Regenerate completions after upgrading `grok` — the script reflects the CLI of
 
 ### Debug logging
 
-Write logs to a file for debugging. The TUI captures stderr, so `RUST_LOG` alone won't produce visible output in production — use `grok --debug` or `GROK_LOG_FILE` instead:
+Write logs to a file for debugging. The TUI captures stderr, so `RUST_LOG` alone won't produce visible output in production — use `echo-build --debug` or `GROK_LOG_FILE` instead:
 
 ```bash
 # Per-session debug log (~/.grok/debug/<sessionId>.txt)
-grok --debug
+echo-build --debug
 
 # Log to a custom path
-GROK_LOG_FILE=/tmp/grok-debug.log grok
+GROK_LOG_FILE=/tmp/grok-debug.log echo-build
 
 # Tail the most-recently-opened session's log in another terminal (Unix symlink)
 tail -f ~/.grok/debug/latest.txt
@@ -2500,17 +2500,17 @@ The `--debug` firehose uses a fixed filter (first-party crates at `debug`) and i
 
 ```bash
 # Debug auth, info for everything else
-GROK_LOG_FILE=/tmp/grok-debug.log RUST_LOG="info,xai_grok_shell::auth=debug" grok
+GROK_LOG_FILE=/tmp/grok-debug.log RUST_LOG="info,xai_grok_shell::auth=debug" echo-build
 ```
 
 ### Authentication fails
 
 ```bash
 # Clear credentials and re-login
-grok login
+echo-build login
 
 # Debug auth issues — check the log for "auth:" entries
-grok --debug-file /tmp/grok-auth.log -p "hello"
+echo-build --debug-file /tmp/grok-auth.log -p "hello"
 grep "auth:" /tmp/grok-auth.log
 ```
 
@@ -2518,7 +2518,7 @@ grep "auth:" /tmp/grok-auth.log
 
 ```bash
 # List available models
-grok models
+echo-build models
 
 # Check config.toml for typos in [model.*] sections
 ```

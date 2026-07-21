@@ -22,14 +22,14 @@ Memory is experimental and disabled by default.
 ### Per-Session Flag
 
 ```bash
-grok --experimental-memory
+echo-build --experimental-memory
 ```
 
 ### Environment Variable
 
 ```bash
 export GROK_MEMORY=1
-grok
+echo-build
 ```
 
 ### Config File (Persistent)
@@ -45,7 +45,7 @@ enabled = true
 To disable memory even when other settings enable it:
 
 ```bash
-grok --no-memory
+echo-build --no-memory
 ```
 
 Or:
@@ -324,23 +324,23 @@ lambda = 0.7             # 0.0 = max diversity, 1.0 = pure relevance
 
 ## CLI Commands
 
-The `grok memory` command manages memory from the shell. It has one subcommand, `clear`:
+The `echo-build memory` command manages memory from the shell. It has one subcommand, `clear`:
 
 ```bash
 # Clear workspace memory (MEMORY.md, sessions/, and index.sqlite). This is the default scope.
-grok memory clear
+echo-build memory clear
 
 # The same scope, stated explicitly
-grok memory clear --workspace
+echo-build memory clear --workspace
 
 # Clear the global MEMORY.md
-grok memory clear --global
+echo-build memory clear --global
 
 # Clear both workspace and global memory
-grok memory clear --all
+echo-build memory clear --all
 
 # Skip the confirmation prompt (-y is the short form)
-grok memory clear --yes
+echo-build memory clear --yes
 ```
 
 To edit memory from the shell, open the files in your editor directly -- for example, `$EDITOR ~/.grok/memory/MEMORY.md`.
@@ -450,8 +450,8 @@ enabled = true    # default
 
 ### Memory Not Working
 
-1. Verify memory is enabled: check `grok inspect` output.
-2. Check the flag: `grok --experimental-memory` or `GROK_MEMORY=1`.
+1. Verify memory is enabled: check `echo-build inspect` output.
+2. Check the flag: `echo-build --experimental-memory` or `GROK_MEMORY=1`.
 3. Check for `--no-memory` or `GROK_MEMORY=0` overriding your config.
 
 ### Memory Not Appearing in Sessions
@@ -471,6 +471,6 @@ $EDITOR ~/.grok/memory/MEMORY.md
 ### Debug Logging
 
 ```bash
-RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok
+RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log echo-build
 grep "memory" /tmp/grok.log
 ```

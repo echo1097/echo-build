@@ -1,4 +1,4 @@
-//! `grok models` subcommand.
+//! `echo-build models` subcommand.
 
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;

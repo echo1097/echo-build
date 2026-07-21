@@ -1563,7 +1563,7 @@ pub(crate) async fn run(
         presenter.request_presentation(&mut app, terminal, false);
     }
 
-    // Initial prompt from the CLI positional (`grok "fix the bug"`). When
+    // Initial prompt from the CLI positional (`echo-build "fix the bug"`). When
     // already authenticated, hand it to the shared dispatcher helper (same
     // `NewSession`/`SendPrompt` path the welcome screen uses). ZDR-blocked
     // accounts cannot start a session, so drop the prompt — this mirrors the
@@ -1581,7 +1581,7 @@ pub(crate) async fn run(
         }
     }
 
-    // `grok dashboard` startup: open the dashboard view immediately. The
+    // `echo-build dashboard` startup: open the dashboard view immediately. The
     // CLI subcommand wrote a `GROK_OPEN_DASHBOARD_AT_STARTUP=1` env var
     // so we don't have to thread a flag through every arg struct.
     if std::env::var("GROK_OPEN_DASHBOARD_AT_STARTUP").as_deref() == Ok("1") {
@@ -1748,7 +1748,7 @@ pub(crate) async fn run(
             } else if app.voice_cmd_tx.is_none() {
                 app.voice_state = VoiceState::Idle;
                 app.voice_ui_active = false;
-                app.show_toast("Voice pipeline could not start — restart grok");
+                app.show_toast("Voice pipeline could not start — restart echo-build");
             } else {
                 // Defensive: a queued start with the pipeline already up (which
                 // shouldn't occur) — drop it so we don't re-enter every tick.
