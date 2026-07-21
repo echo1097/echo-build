@@ -19,6 +19,7 @@ pub mod fs_atomic;
 mod loader;
 mod macos_managed;
 mod managed_cache;
+pub mod migration;
 mod paths;
 pub mod shell;
 pub mod signed_policy;
@@ -48,7 +49,8 @@ pub use managed_cache::{
 };
 pub use paths::{
     claude_managed_settings_path, claude_managed_settings_probe_path, decode_cwd_from_dirname,
-    default_grok_home, encode_cwd_dirname, ensure_sessions_cwd_dir, grok_application,
+    default_echo_build_home, default_grok_home, echo_build_application, echo_build_application_in,
+    echo_build_home, encode_cwd_dirname, ensure_sessions_cwd_dir, grok_application,
     grok_application_in, grok_home, sessions_cwd_dir, system_config_dir, user_grok_home,
 };
 pub use validation::{

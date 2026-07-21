@@ -1608,6 +1608,16 @@ fn install_heap_profile_hooks() {
 fn main() {
     install_echo_environment_aliases();
     xai_grok_pager_minimal::install();
+    let early_args = PagerArgs::parse_for_early_command();
+    if let Some(Command::Migrate(migration_args)) = early_args.command {
+        match run_migration_command(migration_args) {
+            Ok(()) => return,
+            Err(error) => {
+                eprintln!("Error: {error:#}");
+                std::process::exit(1);
+            }
+        }
+    }
     #[cfg(all(feature = "jemalloc", unix))]
     xai_grok_pager::memory_release::install_release_hook(purge_jemalloc_retained_pages);
     #[cfg(all(feature = "jemalloc", unix))]
@@ -1679,6 +1689,44 @@ fn main() {
         drop(_sentry_guard);
         std::process::exit(1);
     }
+}
+
+fn run_migration_command(migration_args: xai_grok_pager::app::cli::MigrationArgs) -> Result<()> {
+    let source = migration_args
+        .source
+        .or_else(xai_grok_config::migration::default_legacy_home)
+        .ok_or_else(|| anyhow::anyhow!("Couldnt resolve ~/.grok; pass --source explicitly"))?;
+    let options = xai_grok_config::migration::MigrationOptions {
+        source,
+        destination: xai_grok_config::echo_build_home(),
+        dry_run: migration_args.dry_run,
+        skip: migration_args.skip,
+        include_memory: migration_args.include_memory,
+        conflict_policy: if migration_args.use_source {
+            xai_grok_config::migration::ConflictPolicy::UseSource
+        } else {
+            xai_grok_config::migration::ConflictPolicy::KeepDestination
+        },
+    };
+    let report = xai_grok_config::migration::migrate(&options)?;
+    if migration_args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if report.skipped {
+        println!("Grok Build state import skipped.");
+    } else {
+        println!(
+            "{}",
+            if report.dry_run {
+                "Migration dry run:"
+            } else {
+                "Migration complete:"
+            }
+        );
+        for resource in report.resources {
+            println!("  {:<16} {:?}", resource.resource, resource.status);
+        }
+    }
+    Ok(())
 }
 
 /// Accept canonical Echo Build environment names while inherited internals are
@@ -1797,6 +1845,9 @@ async fn async_main() -> Result<()> {
     let update_config = build_update_config();
     if let Some(command) = args.command.take() {
         match command {
+            Command::Migrate(migration_args) => {
+                return run_migration_command(migration_args);
+            }
             Command::Version { json } => {
                 if json {
                     let payload = serde_json::json!(

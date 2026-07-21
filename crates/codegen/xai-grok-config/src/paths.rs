@@ -25,7 +25,7 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.js
 ///
 /// Keep the dunce canonicalization in sync with the hand-rolled duplicate in
 /// `xai_fast_worktree::db::resolve_grok_home` (deliberately standalone crate).
-pub fn default_grok_home() -> PathBuf {
+pub fn default_echo_build_home() -> PathBuf {
     #[allow(deprecated)]
     let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
     dunce::canonicalize(&home)
@@ -33,11 +33,16 @@ pub fn default_grok_home() -> PathBuf {
         .join(".echo-build")
 }
 
+/// Compatibility name retained for inherited crates.
+pub fn default_grok_home() -> PathBuf {
+    default_echo_build_home()
+}
+
 /// Per-user config directory.
 ///
 /// `ECHO_BUILD_HOME` is canonical. `GROK_HOME` remains a read-time compatibility
 /// alias through the 0.2 release line and is planned for removal in 0.3.0.
-pub fn grok_home() -> PathBuf {
+pub fn echo_build_home() -> PathBuf {
     ECHO_BUILD_HOME
         .get_or_init(|| {
             let echo_override = nonempty_env("ECHO_BUILD_HOME");
@@ -47,11 +52,14 @@ pub fn grok_home() -> PathBuf {
                     "GROK_HOME is deprecated; use ECHO_BUILD_HOME (support ends in 0.3.0)"
                 );
             }
-            let echo_home = select_home(echo_override, legacy_override, default_grok_home());
-            let _ = std::fs::create_dir_all(&echo_home);
-            echo_home
+            select_home(echo_override, legacy_override, default_echo_build_home())
         })
         .clone()
+}
+
+/// Compatibility name retained for inherited crates.
+pub fn grok_home() -> PathBuf {
+    echo_build_home()
 }
 
 fn nonempty_env(name: &str) -> Option<std::ffi::OsString> {
@@ -83,19 +91,29 @@ pub fn user_grok_home() -> Option<PathBuf> {
     resolvable.then(grok_home)
 }
 
-/// Canonical Echo Build application path.
-pub fn grok_application() -> PathBuf {
-    grok_application_in(&grok_home())
+/// Echo-owned application path.
+pub fn echo_build_application() -> PathBuf {
+    echo_build_application_in(&echo_build_home())
 }
 
-/// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
-pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
+/// Echo-owned application path under an explicit home.
+pub fn echo_build_application_in(home: &std::path::Path) -> PathBuf {
     let name = if cfg!(windows) {
         "echo-build.exe"
     } else {
         "echo-build"
     };
     home.join("bin").join(name)
+}
+
+/// Canonical Echo Build application path.
+pub fn grok_application() -> PathBuf {
+    echo_build_application()
+}
+
+/// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
+pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
+    echo_build_application_in(home)
 }
 
 /// System-wide config directory: `/etc/echo-build/` on Unix, `None` on Windows.

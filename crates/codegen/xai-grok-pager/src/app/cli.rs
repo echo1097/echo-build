@@ -8,6 +8,8 @@ use std::path::PathBuf;
 /// Top-level commands for the pager binary.
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
+    /// Import supported non-secret state from Grok Build
+    Migrate(MigrationArgs),
     /// Run Grok without the interactive UI
     Agent(Box<AgentArgs>),
     /// Show the configuration Grok discovers for this directory
@@ -139,6 +141,28 @@ See ~/.grok/README.md for more information.
     /// `~/.grok/config.toml` or when the `GROK_AGENT_DASHBOARD=0` env
     /// var is set.
     Dashboard,
+}
+
+#[derive(Debug, clap::Args, Clone)]
+pub struct MigrationArgs {
+    /// Legacy state directory. Defaults to ~/.grok.
+    #[arg(long, value_hint = ValueHint::DirPath)]
+    pub source: Option<PathBuf>,
+    /// Report what would be imported without writing anything.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Record an explicit decision not to import anything.
+    #[arg(long, conflicts_with_all = ["dry_run", "include_memory", "use_source"])]
+    pub skip: bool,
+    /// Import memory. Memory is excluded unless this flag is present.
+    #[arg(long)]
+    pub include_memory: bool,
+    /// Replace destination resources when source and destination conflict.
+    #[arg(long)]
+    pub use_source: bool,
+    /// Emit the migration report as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 /// Arguments for the `wrap` subcommand: the command to run, then its args.
 #[derive(Debug, clap::Args, Clone)]
@@ -771,6 +795,20 @@ pub enum ResumeTarget {
     None,
 }
 impl PagerArgs {
+    /// Parse arguments without applying cwd or performing other startup work.
+    pub fn parse_for_early_command() -> Self {
+        let bin_name = std::env::args()
+            .next()
+            .as_deref()
+            .map(std::path::Path::new)
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .filter(|name| *name == "echo-build")
+            .unwrap_or("echo-build")
+            .to_owned();
+        Self::parse_from(std::iter::once(bin_name).chain(std::env::args().skip(1)))
+    }
+
     /// Parse CLI arguments and apply `--cwd` if provided.
     pub fn parse_and_apply_cwd() -> anyhow::Result<Self> {
         let bin_name = std::env::args()

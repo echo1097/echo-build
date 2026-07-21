@@ -201,10 +201,10 @@ impl WorktreeDb {
         })
     }
 
-    /// Open the default DB at `~/.grok/worktrees.db`.
+    /// Open the default DB at `~/.echo-build/worktrees.db`.
     ///
-    /// Discovers grok home via `$GROK_HOME`, falling back to the canonicalized
-    /// `$HOME/.grok` (matching `xai_grok_config::grok_home`).
+    /// Discovers Echo Build home via `$ECHO_BUILD_HOME`, then the temporary
+    /// `$GROK_HOME` compatibility alias, then `$HOME/.echo-build`.
     /// Path is resolved fresh each call (~1µs env var read) to support
     /// test overrides. Each call opens its own connection — callers in hot
     /// paths should cache the `WorktreeDb` instance.
@@ -338,15 +338,27 @@ pub fn now_epoch_secs() -> i64 {
 }
 
 pub fn resolve_grok_home() -> Result<PathBuf> {
-    if let Ok(v) = std::env::var("GROK_HOME") {
-        return Ok(PathBuf::from(v));
+    if let Ok(v) = std::env::var("ECHO_BUILD_HOME") {
+        if !v.is_empty() {
+            return Ok(PathBuf::from(v));
+        }
     }
-    let home = PathBuf::from(std::env::var("HOME").context("neither $GROK_HOME nor $HOME is set")?);
-    // Canonicalize the home dir so worktree paths share the same physical .grok
+    if let Ok(v) = std::env::var("GROK_HOME") {
+        if !v.is_empty() {
+            tracing::warn!("GROK_HOME is deprecated; use ECHO_BUILD_HOME (support ends in 0.3.0)");
+            return Ok(PathBuf::from(v));
+        }
+    }
+    let home = PathBuf::from(
+        std::env::var("HOME").context("none of $ECHO_BUILD_HOME, $GROK_HOME, or $HOME is set")?,
+    );
+    // Canonicalize the home dir so worktree paths share the same physical tree
     // tree as trust/hooks even when it is symlinked. The dunce canonicalization
     // must stay in sync with xai_grok_config::default_grok_home();
     // home resolution deliberately differs ($HOME here vs std::env::home_dir()).
-    Ok(dunce::canonicalize(&home).unwrap_or(home).join(".grok"))
+    Ok(dunce::canonicalize(&home)
+        .unwrap_or(home)
+        .join(".echo-build"))
 }
 
 /// Serializes tests that mutate the process-global `GROK_HOME` env var so they
