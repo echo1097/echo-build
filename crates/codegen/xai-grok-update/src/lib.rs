@@ -1,5 +1,6 @@
 pub mod auto_update;
 mod minimum_version;
+pub mod source_release;
 pub mod version;
 
 pub use auto_update::UpdateStatus;

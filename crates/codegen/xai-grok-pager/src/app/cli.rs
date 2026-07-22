@@ -87,21 +87,12 @@ See ~/.grok/README.md for more information.
         /// Emit machine-readable JSON output (for --check).
         #[arg(long)]
         json: bool,
-        /// Force re-download and install even if already up to date.
-        #[arg(long)]
-        force_reinstall: bool,
-        /// Install a specific version (e.g. 0.1.150 or 0.1.151-alpha.2).
+        /// Install an exact release tag (for example v0.2.107).
         #[arg(long)]
         version: Option<String>,
-        /// Switch to the alpha release channel (faster updates, may have bugs).
-        #[arg(long, conflicts_with_all = ["stable", "enterprise"])]
-        alpha: bool,
-        /// Switch to the stable release channel (default, weekly releases).
-        #[arg(long, conflicts_with_all = ["alpha", "enterprise"])]
-        stable: bool,
-        /// Switch to the enterprise release channel.
-        #[arg(long, conflicts_with_all = ["alpha", "stable"], hide = true)]
-        enterprise: bool,
+        /// Permit a non-interactive downgrade to the selected version.
+        #[arg(long, requires = "version")]
+        allow_downgrade: bool,
     },
     /// Print version information
     #[command(visible_alias = "v")]

@@ -1954,24 +1954,12 @@ async fn async_main() -> Result<()> {
             Command::Update {
                 check,
                 json,
-                force_reinstall,
                 version,
-                alpha,
-                stable,
-                enterprise,
+                allow_downgrade,
             } => {
                 init_tracing_simple("cli");
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
-                let channel_switch = get_channel_switch(alpha, stable, enterprise);
-                return run_update_command(
-                    check,
-                    json,
-                    force_reinstall,
-                    version,
-                    channel_switch,
-                    &update_config,
-                )
-                .await;
+                return run_update_command(check, json, version, allow_downgrade).await;
             }
             Command::Login {
                 legacy: _,
@@ -2249,47 +2237,33 @@ fn get_channel_switch(alpha: bool, stable: bool, enterprise: bool) -> Option<&'s
         None
     }
 }
-/// Handle `grok-pager update [--check] [--json] [--force-reinstall] [--version X] [--alpha|--stable|--enterprise]`.
+/// Handle the explicit source-release update command.
 async fn run_update_command(
     check: bool,
     json: bool,
-    force_reinstall: bool,
     version: Option<String>,
-    channel_switch: Option<&str>,
-    base_update_config: &UpdateConfig,
+    allow_downgrade: bool,
 ) -> Result<()> {
     if json && !check {
         anyhow::bail!("--json requires --check");
     }
-    let mut update_config = base_update_config.clone();
     if check {
         if version.is_some() {
             anyhow::bail!("--version cannot be used with --check");
         }
-        auto_update::apply_channel_switch(channel_switch, &mut update_config).await;
-        let status = auto_update::check_update_status(&update_config).await;
-        auto_update::print_update_status(&status, json)?;
+        let status = xai_grok_update::source_release::check().await?;
+        if json {
+            println!("{}", serde_json::to_string(&status)?);
+        } else {
+            println!(
+                "Echo Build - v{} (latest: v{})",
+                status.current_version, status.latest_version
+            );
+        }
         return Ok(());
     }
-    if let Some(ref v) = version
-        && semver::Version::parse(v).is_err()
-    {
-        anyhow::bail!(
-            "'{}' is not a valid version. Expected semver like 0.1.150",
-            v
-        );
-    }
-    let installed = auto_update::run_update(
-        force_reinstall,
-        version.as_deref(),
-        channel_switch,
-        &mut update_config,
-    )
-    .await?;
-    if let Some(installed_version) = installed {
-        signal_leaders_to_relaunch(&installed_version).await;
-    }
-    Ok(())
+
+    xai_grok_update::source_release::install(version.as_deref(), allow_downgrade).await
 }
 /// After a successful `grok update`, ask any running leader on this machine that
 /// is older than `installed_version` to relaunch onto the new binary (bounded
@@ -2509,56 +2483,22 @@ mod tests {
         xai_grok_shell::heap_profile::dump_to_path(dump.path()).expect("shell dump");
         dump.assert_nonempty_dump();
     }
-    #[cfg(unix)]
     #[test]
-    fn is_managed_install_matches_only_the_bin_grok_target() {
-        let home =
-            std::env::temp_dir().join(format!("grok-pager-managed-install-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&home);
-        std::fs::create_dir_all(home.join("bin")).unwrap();
-        std::fs::create_dir_all(home.join("downloads")).unwrap();
-        assert!(!is_managed_install(
-            Some(home.join("bin").join("grok")),
-            &home
-        ));
-        assert!(!is_managed_install(None, &home));
-        assert!(!is_managed_install(
-            Some(home.join("bin").join("grok")),
-            std::path::Path::new("")
-        ));
-        let target = home.join("downloads").join("grok-1.2.3");
-        std::fs::write(&target, b"binary").unwrap();
-        std::os::unix::fs::symlink(&target, home.join("bin").join("grok")).unwrap();
-        assert!(is_managed_install(
-            Some(home.join("bin").join("grok")),
-            &home
-        ));
-        assert!(is_managed_install(Some(target.clone()), &home));
-        let pinned = home.join("bin").join("grok-9.9.9");
-        std::fs::write(&pinned, b"binary").unwrap();
-        assert!(!is_managed_install(Some(pinned), &home));
-        let _ = std::fs::remove_dir_all(&home);
-    }
-    /// Pins the gate composition; a dropped conjunct fails its named case.
-    #[test]
-    fn stdio_auto_update_requires_direct_stdio_enabled_and_managed() {
-        assert!(stdio_auto_update_enabled(true, false, true, true));
-        assert!(
-            !stdio_auto_update_enabled(true, true, true, true),
-            "leader bridge"
-        );
-        assert!(
-            !stdio_auto_update_enabled(false, false, true, true),
-            "non-stdio"
-        );
-        assert!(
-            !stdio_auto_update_enabled(true, false, false, true),
-            "updates off"
-        );
-        assert!(
-            !stdio_auto_update_enabled(true, false, true, false),
-            "pinned binary"
-        );
+    fn background_auto_update_is_always_disabled() {
+        for is_stdio in [false, true] {
+            for use_leader in [false, true] {
+                for updates_enabled in [false, true] {
+                    for managed_install in [false, true] {
+                        assert!(!stdio_auto_update_enabled(
+                            is_stdio,
+                            use_leader,
+                            updates_enabled,
+                            managed_install
+                        ));
+                    }
+                }
+            }
+        }
     }
     use clap::Parser as _;
     /// `grok dashboard` flags the startup hook without forcing leader mode —

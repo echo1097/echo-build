@@ -6,6 +6,7 @@ commands, searches the web, and manages long-running tasks — interactively,
 headlessly for scripting/CI, or embedded in editors via the Agent Client
 Protocol (ACP).
 
+[Install](#install) ·
 [Building from source](#building-from-source) ·
 [Authentication](#authentication) ·
 [Documentation](#documentation) ·
@@ -21,8 +22,37 @@ upstream implementation details to keep the fork boundary narrow.
 A small `SOURCE_REV` file at the root records the full monorepo commit SHA
 for the version of the code present in this tree.
 
-No Echo-owned binary, GitHub release repository, installer, or npm package is
-configured yet. Upstream Grok distribution channels are intentionally not used.
+Echo Build is distributed only as versioned source tags from the Echo-owned
+[`echo1097/echo-build`](https://github.com/echo1097/echo-build) repository. The
+installer builds locally; there are no prebuilt binaries, npm packages, automatic
+update checks, or background updates.
+
+## Install
+
+The installer supports macOS and Linux on x86-64 and ARM64. It requires Git,
+Rust/Cargo, a C linker, and platform build tools. On macOS install Xcode Command
+Line Tools; on Debian or Ubuntu install `build-essential`. The build also uses
+DotSlash and `protoc` as described below.
+
+```sh
+curl --proto '=https' --tlsv1.2 --fail \
+  https://raw.githubusercontent.com/echo1097/echo-build/main/install.sh | sh
+```
+
+This selects the latest stable SemVer tag, checks it out in detached HEAD state,
+builds with the locked distribution profile, and atomically installs
+`~/.local/bin/echo-build`. It never creates a `grok` executable. Installation and
+updates are explicit:
+
+```sh
+echo-build update --check
+echo-build update
+echo-build update --version v0.2.106
+echo-build update --version v0.2.105 --allow-downgrade
+```
+
+See [the source release guide](docs/releasing.md) for reinstall, rollback,
+uninstall, release trust, and bad-release recovery procedures.
 
 ## Building from source
 
@@ -47,11 +77,11 @@ Requirements:
 
 ```sh
 cargo run -p xai-grok-pager-bin --bin echo-build
-cargo build -p xai-grok-pager-bin --release --bin echo-build
+cargo build --locked --profile release-dist -p xai-grok-pager-bin --bin echo-build
 cargo check -p xai-grok-pager-bin
 ```
 
-The binary artifact is `target/release/echo-build`.
+The distribution binary artifact is `target/release-dist/echo-build`.
 
 User state defaults to `~/.echo-build`. Set `ECHO_BUILD_HOME` to override it.
 `GROK_HOME` and selected `GROK_*` environment aliases are compatibility-only
