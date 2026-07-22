@@ -876,7 +876,7 @@ pub(crate) async fn run(
     // The Echo Build TUI is gated on API-key credentials. A cached Grok/OIDC
     // session must not bypass OpenRouter key entry.
     let has_api_key = connection.auth_methods.iter().any(|method| {
-        method.id().0.as_ref() == xai_grok_shell::agent::auth_method::XAI_API_KEY_METHOD_ID
+        method.id().0.as_ref() == xai_grok_shell::agent::auth_method::OPENROUTER_API_KEY_METHOD_ID
     });
     let force_login = args.force_login;
     let needs_interactive_login =
@@ -910,7 +910,7 @@ pub(crate) async fn run(
     } else {
         // No cached session — check if the API key is the active credential.
         app.is_api_key_auth = app.auth_methods.iter().any(|m| {
-            m.id().0.as_ref() == xai_grok_shell::agent::auth_method::XAI_API_KEY_METHOD_ID
+            m.id().0.as_ref() == xai_grok_shell::agent::auth_method::OPENROUTER_API_KEY_METHOD_ID
         });
         // No AuthMeta on this path — hide `/usage` for API keys.
         if app.is_api_key_auth {

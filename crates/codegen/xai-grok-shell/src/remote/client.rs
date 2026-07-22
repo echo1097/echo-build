@@ -732,7 +732,7 @@ pub(crate) fn fetch_models_blocking(
     match source.auth {
         EndpointAuth::ApiKey => {
             let _ = auth;
-            let api_key = crate::agent::auth_method::read_xai_api_key_env().map_err(|_| {
+            let api_key = crate::auth::cached_api_key().ok_or_else(|| {
                 BackendError::Auth(
                     "OpenRouter API key is not available in the credential store.".into(),
                 )

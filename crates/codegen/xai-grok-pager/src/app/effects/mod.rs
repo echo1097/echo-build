@@ -2009,7 +2009,7 @@ pub(crate) fn execute(
                     &tx,
                     request_seq,
                     acp::AuthMethodId::new(
-                        xai_grok_shell::agent::auth_method::XAI_API_KEY_METHOD_ID,
+                        xai_grok_shell::agent::auth_method::OPENROUTER_API_KEY_METHOD_ID,
                     ),
                     false,
                     false,

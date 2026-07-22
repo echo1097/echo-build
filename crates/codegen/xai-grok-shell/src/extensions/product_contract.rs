@@ -14,7 +14,10 @@ pub struct MethodRoute {
 pub fn route_method(method: &str) -> MethodRoute {
     let internal_method = match method {
         "echo.openrouter/getApiKeyStatus" => "x.ai/getApiKey".to_owned(),
+        "echo.openrouter/status" => "x.ai/getApiKey".to_owned(),
         "echo.openrouter/setApiKey" => "x.ai/setApiKey".to_owned(),
+        "echo.openrouter/setKey" => "x.ai/setApiKey".to_owned(),
+        "echo.openrouter/clearKey" => "x.ai/auth/logout".to_owned(),
         "echo.openrouter/logout" => "x.ai/auth/logout".to_owned(),
         "echo.openrouter/info" => "x.ai/auth/info".to_owned(),
         _ if method.starts_with("echo.build/") => {
@@ -61,9 +64,18 @@ mod tests {
 
     #[test]
     fn openrouter_auth_has_a_separate_namespace() {
-        assert_eq!(
-            route_method("echo.openrouter/logout").internal_method,
-            "x.ai/auth/logout"
-        );
+        let expected = [
+            ("echo.openrouter/status", "x.ai/getApiKey"),
+            ("echo.openrouter/setKey", "x.ai/setApiKey"),
+            ("echo.openrouter/clearKey", "x.ai/auth/logout"),
+            ("echo.openrouter/logout", "x.ai/auth/logout"),
+            ("echo.openrouter/info", "x.ai/auth/info"),
+        ];
+
+        for (canonical, internal) in expected {
+            let route = route_method(canonical);
+            assert_eq!(route.internal_method, internal);
+            assert!(!route.legacy_alias);
+        }
     }
 }

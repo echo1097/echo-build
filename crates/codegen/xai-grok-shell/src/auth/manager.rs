@@ -2267,20 +2267,10 @@ fn prefers_static_api_key(am: &AuthManager) -> bool {
     )
 }
 
-/// Env → process model key → disk. Off under kill-switch / oidc pin.
+/// Secure OpenRouter cache only. Legacy session configuration cannot override it.
 fn resolve_static_api_key(am: &AuthManager) -> Option<String> {
-    if am.grok_com_config.api_key_auth_disabled() {
-        return None;
-    }
-    if matches!(
-        am.grok_com_config.preferred_method,
-        Some(super::config::PreferredAuthMethod::Oidc)
-    ) {
-        return None;
-    }
-    non_empty_key(crate::agent::auth_method::read_xai_api_key_env().ok())
-        .or_else(|| non_empty_key(am.process_static_api_key.read().clone()))
-        .or_else(|| am.cached_disk_api_key())
+    let _ = am;
+    non_empty_key(crate::auth::cached_api_key())
 }
 
 fn api_key_from_auth_file(path: &Path) -> Option<String> {

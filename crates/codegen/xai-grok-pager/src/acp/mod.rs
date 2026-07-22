@@ -712,7 +712,7 @@ async fn eager_auth_or_login_fallback(
             // already preferred them — do not auto-open browser login.
             let has_api_key = auth_methods
                 .iter()
-                .any(|m| AuthMethodKind::from_id(m.id()) == AuthMethodKind::XaiApiKey);
+                .any(|m| AuthMethodKind::from_id(m.id()).is_api_key());
             if has_api_key {
                 return (false, login_label, login_method_id, auth_start_mode, None);
             }
@@ -757,7 +757,7 @@ async fn authenticate(
 /// Pick the method id for eager authenticate.
 ///
 /// 1. Agent's `defaultAuthMethodId` when present in the advertised list
-/// 2. Legacy: `cached_token` if advertised, else first method
+/// 2. First advertised method for compatibility with older agents
 pub fn select_eager_auth_method(
     auth_methods: &[acp::AuthMethod],
     default_auth_method_id: Option<&acp::AuthMethodId>,
@@ -767,12 +767,7 @@ pub fn select_eager_auth_method(
     {
         return Some(default_id.clone());
     }
-    let cached_token_method = auth_methods
-        .iter()
-        .find(|m| AuthMethodKind::from_id(m.id()) == AuthMethodKind::CachedToken);
-    cached_token_method
-        .or_else(|| auth_methods.first())
-        .map(|m| m.id().clone())
+    auth_methods.first().map(|method| method.id().clone())
 }
 
 #[cfg(test)]
@@ -883,24 +878,24 @@ mod tests {
     }
 
     #[test]
-    fn startup_auth_grok_com_no_provider_needs_login_pending() {
+    fn startup_auth_grok_com_no_provider_is_rejected_as_interactive() {
         let methods = vec![make_auth_method("grok.com", "grok.com", None)];
         let (needs, label, method_id, mode) = startup_auth_metadata(&methods);
-        assert!(needs);
-        assert_eq!(label.as_deref(), Some("grok.com"));
-        assert_eq!(method_id.as_ref().unwrap().0.as_ref(), "grok.com");
+        assert!(!needs);
+        assert!(label.is_none());
+        assert!(method_id.is_none());
         assert_eq!(mode, AuthStartMode::Pending);
     }
 
     #[test]
-    fn startup_auth_grok_com_with_external_provider_command() {
+    fn startup_auth_external_provider_cannot_start_command() {
         let meta = serde_json::json!({ "external_provider": true });
         let methods = vec![make_auth_method("grok.com", "Acme Corp", Some(meta))];
         let (needs, label, method_id, mode) = startup_auth_metadata(&methods);
-        assert!(needs);
-        assert_eq!(label.as_deref(), Some("Acme Corp"));
-        assert_eq!(method_id.as_ref().unwrap().0.as_ref(), "grok.com");
-        assert_eq!(mode, AuthStartMode::Command);
+        assert!(!needs);
+        assert!(label.is_none());
+        assert!(method_id.is_none());
+        assert_eq!(mode, AuthStartMode::Pending);
     }
 
     #[test]
@@ -913,88 +908,42 @@ mod tests {
         assert_eq!(mode, AuthStartMode::Pending);
     }
 
-    /// CROSS-CRATE REGRESSION GUARD:
-    ///
-    /// Enterprise/BYOK configs (e.g. an enterprise `~/.grok/config.toml` with a
-    /// `[model.*]` table containing `env_key = "ANTHROPIC_AUTH_TOKEN"`) MUST
-    /// NOT send the user to the login screen at startup.
-    ///
-    /// This test exercises the SHELL-PAGER JOIN, not just the pager half:
-    /// it calls the shell-side `build_auth_methods()` with the exact inputs
-    /// `MvpAgent::initialize()` would compute for an enterprise user, then feeds
-    /// the result into the pager's `startup_auth_metadata()`. If a future
-    /// change re-orders `build_auth_methods()` to put `xai.api_key` anywhere
-    /// other than first (the shape of a past regression), this test fails
-    /// because `startup_auth_metadata()` returns `needs_login = true`.
-    ///
-    /// Counterpart shell-side tests
-    /// (`agent::auth_method::tests::enterprise_byok_first_method_is_xai_api_key`
-    /// and `enterprise_byok_config_does_not_require_login`) pin the same
-    /// invariant from the shell side; this test pins the cross-crate
-    /// contract that the pager actually consumes the shell's output as
-    /// expected.
     #[test]
-    fn shell_built_auth_methods_for_byok_user_skip_login_screen() {
-        use xai_grok_shell::agent::auth_method::{AuthMethodsBuildInputs, build_auth_methods};
-
-        let built = build_auth_methods(AuthMethodsBuildInputs {
-            // enterprise-style: model has `env_key` set and the env var resolves,
-            // so the shell-side predicate returns true.
-            has_external_api_key: true,
-            // Realistic enterprise user: no cached session token, default `grok.com`
-            // login (no enterprise OIDC).
-            has_cached_token: false,
-            has_enterprise_oidc: false,
-            enterprise_oidc_issuer: None,
-            login_label: None,
-            has_auth_provider_command: false,
-            preferred_method: None,
-        });
-
-        let (needs, label, method_id, mode) = startup_auth_metadata(&built.methods);
+    fn shell_advertises_only_non_browser_openrouter_auth() {
+        let methods = xai_grok_shell::agent::auth_method::build_auth_methods();
+        let (needs, label, method_id, mode) = startup_auth_metadata(&methods);
         assert!(
             !needs,
-            "shell built auth_methods for a BYOK user, but the pager still \
-             reports needs_login = true. Either the shell stopped putting \
-             xai.api_key first or the pager stopped treating xai.api_key as \
-             a no-login method.",
+            "OpenRouter key entry must not start an interactive browser flow",
+        );
+        assert_eq!(methods.len(), 1);
+        assert_eq!(
+            methods[0].id().0.as_ref(),
+            xai_grok_shell::agent::auth_method::OPENROUTER_API_KEY_METHOD_ID
         );
         assert!(label.is_none());
         assert!(method_id.is_none());
         assert_eq!(mode, AuthStartMode::Pending);
     }
 
-    /// Inverse direction: when `xai.api_key` is NOT in the list, the pager
-    /// MUST show the login screen. We assert this with `xai.api_key` present
-    /// LATER in the list (the shape of a past regression) and confirm the
-    /// pager still requires login -- because the pager only inspects
-    /// `auth_methods.first()`. This locks the failure mode of the regression:
-    /// if a future refactor makes the pager scan past `.first()`, this test
-    /// stops being equivalent to
-    /// `startup_auth_grok_com_no_provider_needs_login_pending` above and
-    /// either passes or fails on a meaningful new code path.
     #[test]
-    fn startup_auth_xai_api_key_not_first_still_requires_login() {
-        use xai_grok_shell::agent::auth_method::{GROK_COM_METHOD_ID, XAI_API_KEY_METHOD_ID};
-
-        let methods = vec![
-            make_auth_method(GROK_COM_METHOD_ID, "Grok", None),
-            make_auth_method(XAI_API_KEY_METHOD_ID, "xai.api_key", None),
-        ];
-        let (needs, _, _, _) = startup_auth_metadata(&methods);
+    fn unsupported_legacy_method_cannot_start_browser_login() {
+        let methods = vec![make_auth_method("grok.com", "Grok", None)];
+        let (needs, label, method_id, _) = startup_auth_metadata(&methods);
+        assert!(!needs);
+        assert!(label.is_none());
+        assert!(method_id.is_none());
         assert!(
-            needs,
-            "with grok.com first, the pager must require login -- pinning \
-             the BAD-ordering failure mode (xai.api_key not first)",
+            !AuthMethodKind::from_id(methods[0].id()).needs_interactive_login(),
+            "legacy methods must not regain a browser-capable path",
         );
     }
 
     #[test]
-    fn startup_auth_method_id_is_copied_not_synthesized() {
+    fn startup_auth_does_not_return_legacy_method_id() {
         let methods = vec![make_auth_method("grok.com", "My Login", None)];
         let (_, _, method_id, _) = startup_auth_metadata(&methods);
-        // Verify it's the exact same ID from the method, not hardcoded
-        assert_eq!(&method_id.unwrap(), methods[0].id());
+        assert!(method_id.is_none());
     }
 
     #[test]

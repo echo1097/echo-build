@@ -140,134 +140,43 @@ impl acp::Agent for MvpAgent {
         if self.initialize_request.set(arguments).is_err() {
             tracing::info!("Initialize called on reconnect (already initialized)");
         }
-        let disable_api_key_auth = false;
-        let has_external_api_key = auth_method::should_advertise_xai_api_key(
-            disable_api_key_auth,
-            self.models_manager.models().values(),
-        );
-        let init_has_current = false;
-        let init_is_expired = false;
-        xai_grok_telemetry::unified_log::info(
-            "auth init token state",
-            None,
-            Some(
-                serde_json::json!(
-                    { "has_current" : init_has_current, "is_expired" : init_is_expired, }
-                ),
-            ),
-        );
-        let mut has_cached_token = init_has_current;
-        if !init_has_current && init_is_expired {
-            let refreshed = self.auth_manager.auth().await.is_ok();
-            if refreshed {
-                tracing::debug!(
-                    auth_type = ? self.auth_type(),
-                    "auth: initialize() silent refresh succeeded",
-                );
-                xai_grok_telemetry::unified_log::info(
-                    "auth: initialize() silent refresh succeeded",
-                    None,
-                    Some(
-                        serde_json::json!(
-                            { "auth_type" : format!("{:?}", self.auth_type()) }
-                        ),
-                    ),
-                );
-                has_cached_token = true;
-            } else {
-                tracing::warn!(
-                    "auth: token expired, silent refresh failed - re-authentication required"
-                );
-                xai_grok_telemetry::unified_log::warn(
-                    "auth: token expired, silent refresh failed - re-authentication required",
-                    None,
-                    None,
-                );
-            }
-        }
-        let login_label: Option<String> = None;
-        let has_auth_provider = false;
-        let has_enterprise_oidc = false;
-        let enterprise_oidc_issuer: Option<String> = None;
-        if has_enterprise_oidc {
-            let issuer = enterprise_oidc_issuer
-                .as_deref()
-                .expect(
-                    "enterprise_oidc_issuer must be Some when has_enterprise_oidc is true",
-                );
-            tracing::info!(
-                issuer = % issuer, "auth: advertising enterprise OIDC auth method",
-            );
-            xai_grok_telemetry::unified_log::info(
-                "auth: advertising enterprise OIDC auth method",
-                None,
-                Some(serde_json::json!({ "issuer" : issuer })),
-            );
-        } else {
-            tracing::info!(
-                label = ? login_label, has_auth_provider,
-                "auth: advertising grok.com auth method",
-            );
-        }
-        let preferred_method = None;
-        let has_external_api_key = match preferred_method {
-            Some(crate::auth::PreferredAuthMethod::Oidc) => false,
-            _ => has_external_api_key,
-        };
-        let has_cached_token = match preferred_method {
-            Some(crate::auth::PreferredAuthMethod::ApiKey) => false,
-            _ => has_cached_token,
-        };
-        let built = auth_method::build_auth_methods(auth_method::AuthMethodsBuildInputs {
-            has_external_api_key,
-            has_cached_token,
-            has_enterprise_oidc,
-            enterprise_oidc_issuer: enterprise_oidc_issuer.as_deref(),
-            login_label: login_label.as_deref(),
-            has_auth_provider_command: has_auth_provider,
-            preferred_method,
-        });
-        let auth_methods = built.methods;
+        let has_openrouter_api_key = crate::auth::cached_api_key().is_some();
+        let auth_methods = auth_method::build_auth_methods();
         xai_grok_telemetry::unified_log::info(
             "auth: initialize() built auth_methods for ACP response",
             None,
             Some(
                 serde_json::json!(
                     { "grok_home" : crate ::util::grok_home::grok_home().display()
-                    .to_string(), "HOME" : std::env::var("HOME").unwrap_or_else(| _ |
-                    "(unset)".into()), "has_external_api_key" : has_external_api_key,
-                    "disable_api_key_auth" : disable_api_key_auth, "has_cached_token" :
-                    has_cached_token, "has_enterprise_oidc" : has_enterprise_oidc,
-                    "init_has_current" : init_has_current, "init_is_expired" :
-                    init_is_expired, "auth_mode" : self.auth_manager.current().map(| a |
-                    format!("{:?}", a.auth_mode)), "methods" : auth_methods.iter().map(|
+                    .to_string(), "has_openrouter_api_key" : has_openrouter_api_key,
+                    "methods" : auth_methods.iter().map(|
                     m | m.id().0.as_ref()).collect::< Vec < _ >> (),
-                    "default_auth_method_id" : built.default_auth_method_id.as_ref()
-                    .map(| id | id.0.as_ref()), }
+                    "default_auth_method_id" : has_openrouter_api_key.then_some(
+                    auth_method::OPENROUTER_API_KEY_METHOD_ID), }
                 ),
             ),
         );
         debug_assert!(
-            ! has_external_api_key || matches!(auth_methods.first().map(| m |
+            matches!(auth_methods.first().map(| m |
             auth_method::AuthMethodKind::from_id(m.id())),
-            Some(auth_method::AuthMethodKind::XaiApiKey)),
-            "BYOK invariant violated: xai.api_key MUST be auth_methods.first() \
-             when has_external_api_key is true; got {:?}",
+            Some(auth_method::AuthMethodKind::OpenRouterApiKey)),
+            "OpenRouter API key must be the only advertised auth method; got {:?}",
             auth_methods.first().map(| m | m.id()),
         );
-        let default_auth_method_id_wire: Option<String> = built
-            .default_auth_method_id
+        let default_auth_method_id = has_openrouter_api_key.then(|| {
+            acp::AuthMethodId::new(auth_method::OPENROUTER_API_KEY_METHOD_ID)
+        });
+        let default_auth_method_id_wire = default_auth_method_id
             .as_ref()
             .map(|id| id.0.to_string());
-        if let Some(default_id) = built.default_auth_method_id {
+        if let Some(default_id) = default_auth_method_id {
             xai_grok_telemetry::unified_log::info(
                 "auth method selection",
                 None,
                 Some(
                     serde_json::json!(
                         { "default_auth_method_id" : default_id.0.as_ref(),
-                        "has_external_api_key" : has_external_api_key, "has_cached_token"
-                        : has_cached_token, "methods_first" : auth_methods.first().map(|
+                        "has_openrouter_api_key" : has_openrouter_api_key, "methods_first" : auth_methods.first().map(|
                         m | m.id().0.as_ref()), "methods_count" : auth_methods.len(), }
                     ),
                 ),
@@ -358,17 +267,13 @@ impl acp::Agent for MvpAgent {
             );
         }
         match arguments.method_id.0.as_ref() {
-            auth_method::XAI_API_KEY_METHOD_ID | auth_method::LEGACY_XAI_API_KEY_METHOD_ID => {
+            auth_method::OPENROUTER_API_KEY_METHOD_ID
+            | auth_method::LEGACY_XAI_API_KEY_METHOD_ID => {
                 let mut sampling_config = self.sampling_config.borrow_mut();
                 if sampling_config.api_key.is_none() {
-                    if let Ok(api_key) = auth_method::read_xai_api_key_env() {
+                    if let Some(api_key) = crate::auth::cached_api_key() {
                         sampling_config.api_key = Some(api_key);
-                    } else if !self
-                        .models_manager
-                        .models()
-                        .values()
-                        .any(|m| m.has_own_credentials())
-                    {
+                    } else {
                         emit_login_span(false, "api_key", None, Some("no_credentials"));
                         return Err(
                             acp::Error::auth_required()
@@ -376,8 +281,10 @@ impl acp::Agent for MvpAgent {
                         );
                     }
                 }
+                drop(sampling_config);
                 self.set_auth_method(arguments.method_id.clone());
                 self.sync_process_static_api_key(None);
+                self.models_manager.on_auth_changed().await;
                 self.ensure_telemetry_client();
                 emit_login_span(true, "api_key", None, None);
                 log_event(xai_grok_telemetry::events::Login {

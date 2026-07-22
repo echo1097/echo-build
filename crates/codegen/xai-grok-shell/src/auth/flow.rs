@@ -1001,7 +1001,7 @@ pub fn perform_logout(
     Ok(LogoutResult {
         was_logged_in,
         email,
-        api_key_still_set: crate::agent::auth_method::has_xai_api_key_env(),
+        api_key_still_set: crate::auth::cached_api_key().is_some(),
     })
 }
 

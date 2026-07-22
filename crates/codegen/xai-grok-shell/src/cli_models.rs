@@ -19,33 +19,10 @@ pub enum AuthStatus {
 }
 
 impl AuthStatus {
-    /// Banner status: env key → session → BYOK → deployment → none.
-    ///
-    /// Differs from sampling (`resolve_credentials`: BYOK → session → env) so a
-    /// logged-in user sees the login host. BYOK uses
-    /// [`crate::agent::auth_method::should_advertise_xai_api_key`] so
-    /// `disable_api_key_auth` is honored.
+    /// Banner status for the secure OpenRouter credential flow.
     pub fn resolve(agent_config: &AgentConfig) -> Self {
-        if crate::agent::auth_method::has_xai_api_key_env() {
+        if crate::auth::cached_api_key().is_some() {
             return Self::ApiKey;
-        }
-        if agent_config.create_auth_manager().current().is_some() {
-            let origin = &agent_config.grok_com_config.grok_ws_origin;
-            let host = origin
-                .strip_prefix("https://")
-                .or_else(|| origin.strip_prefix("http://"))
-                .unwrap_or(origin);
-            return Self::LoggedIn(host.to_owned());
-        }
-        let models = crate::agent::config::resolve_model_list(agent_config, None);
-        if crate::agent::auth_method::should_advertise_xai_api_key(
-            agent_config.grok_com_config.api_key_auth_disabled(),
-            models.values(),
-        ) && let Some(name) = models
-            .iter()
-            .find_map(|(name, entry)| entry.has_own_credentials().then(|| name.clone()))
-        {
-            return Self::ModelCredentials(name);
         }
         if agent_config.endpoints.deployment_key.is_some() {
             return Self::DeploymentKey;

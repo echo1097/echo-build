@@ -1,11 +1,7 @@
 //! Shell-side 401-attribution helpers.
 //!
-//! Every 401 emit site in the shell joins the bearer the client
-//! actually sent on the wire (the `Authorization` value for OAI-compat
-//! backends, `x-api-key` for Anthropic Messages, the API proxy
-//! `Authorization` header for storage / feedback / registry /
-//! idle-resume) with the live
-//! [`AuthManager::current_api_key`] value. The two sinks are:
+//! Every 401 emit site records only the affected consumer and timing metadata.
+//! API-key fragments are never included in attribution payloads or spans.
 //!
 //! 1. [`xai_grok_telemetry::unified_log::warn`] for the local
 //!    `~/.grok/logs/unified.jsonl` file (best-effort; ships to GCS
@@ -19,15 +15,12 @@
 //!
 //! ```text
 //! {
-//!   "sent_key_prefix": "<last 12 chars of bearer the client sent, or """>,
-//!   "current_key_prefix": "<last 12 chars of AuthManager::current_api_key()>",
 //!   "mint_age_seconds": <i64; current time minus auth.create_time, or -1>,
 //!   "expires_at_seconds_from_now": <i64; auth.expires_at minus now,
 //!                                 or 0 when no current token>,
 //!   "consumer": "OaiCompatClient.<endpoint>" | "StorageClient.<op>"
 //!             | "FeedbackClient.<op>" | "SessionRegistryClient.<op>"
 //!             | "IdleResumeModelRefresh",
-//!   "is_stale_snapshot": <bool; true iff sent_prefix differs from a *known* current_prefix>
 //! }
 //! ```
 //!
@@ -48,7 +41,7 @@ use serde_json::Value as JsonValue;
 use xai_grok_sampler::{Auth401AttributionCallback, SamplingConsumer};
 use xai_grok_tools::{Auth401AttributionCallback as ToolAuth401AttributionCallback, ToolConsumer};
 
-use crate::auth::{AuthManager, TOKEN_TTL, token_suffix};
+use crate::auth::{AuthManager, TOKEN_TTL};
 
 /// `cfg(test)`-only process-global counter that bumps on every
 /// successful `record_auth_401` invocation.
@@ -332,8 +325,6 @@ pub(crate) fn record_auth_401(
         // String fields. tracing flattens Option<&str> via Display, so
         // we pre-collapse `None` to "" for both prefix fields and for
         // session_id; downstream queries should treat "" as absent.
-        sent_key_prefix = payload["sent_key_prefix"].as_str().unwrap_or(""),
-        current_key_prefix = payload["current_key_prefix"].as_str().unwrap_or(""),
         consumer = consumer,
         session_id = session_id.unwrap_or(""),
         // Numeric fields. The sentinel values from
@@ -342,7 +333,6 @@ pub(crate) fn record_auth_401(
         mint_age_seconds = payload["mint_age_seconds"].as_i64().unwrap_or(-1),
         expires_at_seconds_from_now = payload["expires_at_seconds_from_now"].as_i64().unwrap_or(0),
         // Boolean -- the load-bearing field for stale-vs-live splits.
-        is_stale_snapshot = payload["is_stale_snapshot"].as_bool().unwrap_or(false),
     )
     .entered();
 
@@ -371,28 +361,8 @@ fn compute_attribution_payload(
 ) -> JsonValue {
     let now = chrono::Utc::now();
 
-    // Last-12-char suffix of the bearer the wire actually carried
-    // (see [`token_suffix`]: JWT headers share a common base64 prefix).
-    // `""` when the request had no bearer at all (distinct case from
-    // "had a bearer that turned out to be stale" -- the gate-criteria
-    // query can break down on this).
-    let sent_prefix = sent_bearer.map(token_suffix).unwrap_or("");
-
-    // Single read-lock acquisition: pull the live `GrokAuth` (or
-    // `None`) once and derive every other field from it.
+    let _ = sent_bearer;
     let current_auth = auth_manager.current();
-    let current_prefix_owned: Option<String> = current_auth
-        .as_ref()
-        .map(|a| token_suffix(&a.key).to_string());
-
-    // None current means "no evidence of staleness," not stale --
-    // the downstream stale-vs-live split should only count
-    // true-positive staleness (sent bearer differs from a known live
-    // bearer).
-    let is_stale_snapshot = match current_prefix_owned.as_deref() {
-        Some(c) => sent_prefix != c,
-        None => false,
-    };
 
     // Mint-age + expiry come from the same `current_auth` we already
     // read; sentinels `-1 / 0` when the manager has no current token.
@@ -414,12 +384,9 @@ fn compute_attribution_payload(
     };
 
     serde_json::json!({
-        "sent_key_prefix": sent_prefix,
-        "current_key_prefix": current_prefix_owned,
         "mint_age_seconds": mint_age_seconds,
         "expires_at_seconds_from_now": expires_at_seconds_from_now,
         "consumer": consumer,
-        "is_stale_snapshot": is_stale_snapshot,
     })
 }
 
@@ -468,14 +435,9 @@ mod tests {
 
         let payload = compute_attribution_payload(&am, "Test.live", Some(sent));
 
-        assert_eq!(payload_field(&payload, "is_stale_snapshot"), false);
         assert_eq!(payload_field(&payload, "consumer"), "Test.live");
-        // Last 12 chars (tail prefix for JWT-friendly diagnostics).
-        assert_eq!(payload_field(&payload, "sent_key_prefix"), "567890abcdef");
-        assert_eq!(
-            payload_field(&payload, "current_key_prefix"),
-            "567890abcdef"
-        );
+        assert!(payload.get("sent_key_prefix").is_none());
+        assert!(payload.get("current_key_prefix").is_none());
         // mint_age_seconds: should be small and non-negative for a
         // freshly-created auth.
         let mint = payload_field(&payload, "mint_age_seconds")
@@ -499,7 +461,7 @@ mod tests {
     /// Stale snapshot sent + 401 with a different (newer) `current()`
     /// -> `is_stale_snapshot` must be `true`.
     #[test]
-    fn stale_snapshot_is_detected() {
+    fn stale_snapshot_does_not_expose_key_material() {
         let (_dir, am) = empty_auth_manager();
         let stale = "stale-token-1234567890";
         let live = "live-token-different";
@@ -507,12 +469,9 @@ mod tests {
 
         let payload = compute_attribution_payload(&am, "Test.stale", Some(stale));
 
-        assert_eq!(payload_field(&payload, "is_stale_snapshot"), true);
-        assert_eq!(payload_field(&payload, "sent_key_prefix"), "n-1234567890");
-        assert_eq!(
-            payload_field(&payload, "current_key_prefix"),
-            "en-different"
-        );
+        assert!(payload.get("sent_key_prefix").is_none());
+        assert!(payload.get("current_key_prefix").is_none());
+        assert!(payload.get("is_stale_snapshot").is_none());
         assert_eq!(payload_field(&payload, "consumer"), "Test.stale");
     }
 
@@ -528,9 +487,8 @@ mod tests {
 
         let payload = compute_attribution_payload(&am, "Test.absent", Some("any-token"));
 
-        assert_eq!(payload_field(&payload, "is_stale_snapshot"), false);
-        assert_eq!(payload_field(&payload, "sent_key_prefix"), "any-token");
-        assert!(payload_field(&payload, "current_key_prefix").is_null());
+        assert!(payload.get("sent_key_prefix").is_none());
+        assert!(payload.get("current_key_prefix").is_none());
         assert_eq!(payload_field(&payload, "mint_age_seconds"), -1);
         assert_eq!(payload_field(&payload, "expires_at_seconds_from_now"), 0);
     }
@@ -776,23 +734,8 @@ mod tests {
             .find(|s| s.name == "auth_401_attribution")
             .expect("expected one auth_401_attribution span; got: {spans:?}");
 
-        // String fields: prefixes truncated to 12 chars, consumer +
-        // session_id passed verbatim.
-        assert_eq!(
-            attribution
-                .fields_str
-                .get("sent_key_prefix")
-                .map(String::as_str),
-            Some("pshot-aaaaaa"),
-            "sent_key_prefix should be last 12 chars",
-        );
-        assert_eq!(
-            attribution
-                .fields_str
-                .get("current_key_prefix")
-                .map(String::as_str),
-            Some("n-1234567890"),
-        );
+        assert!(!attribution.fields_str.contains_key("sent_key_prefix"));
+        assert!(!attribution.fields_str.contains_key("current_key_prefix"));
         assert_eq!(
             attribution.fields_str.get("consumer").map(String::as_str),
             Some("OaiCompatClient.chat_completions_stream"),
@@ -802,12 +745,7 @@ mod tests {
             Some("sid-otel-span"),
         );
 
-        // Boolean: the load-bearing field for stale-vs-live splits.
-        // `true` because `sent != current`.
-        assert_eq!(
-            attribution.fields_bool.get("is_stale_snapshot"),
-            Some(&true),
-        );
+        assert!(!attribution.fields_bool.contains_key("is_stale_snapshot"));
 
         // Numeric: mint_age in [0, 5) for a freshly-injected auth;
         // expires_at ~3600s away.

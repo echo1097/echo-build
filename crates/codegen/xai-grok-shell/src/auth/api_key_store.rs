@@ -114,6 +114,25 @@ fn save_serialized_with(
     save_with(store, grok_home, api_key)
 }
 
+fn save_and_cache_with(
+    store: &impl CredentialStore,
+    grok_home: &std::path::Path,
+    api_key: &str,
+) -> Result<(), ApiKeyStoreError> {
+    save_with(store, grok_home, api_key)?;
+    cache_key(Some(api_key.to_owned()));
+    Ok(())
+}
+
+fn delete_all_and_clear_cache_with(
+    store: &impl CredentialStore,
+    grok_home: &std::path::Path,
+) -> Result<(), ApiKeyStoreError> {
+    delete_all_with(store, grok_home)?;
+    cache_key(None);
+    Ok(())
+}
+
 fn delete_all_serialized_with(
     store: &impl CredentialStore,
     grok_home: &std::path::Path,
@@ -142,18 +161,15 @@ pub fn save_api_key(grok_home: &std::path::Path, api_key: &str) -> Result<(), Ap
     let _operation = CREDENTIAL_OPERATION_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    cache_key(None);
-    save_with(&SystemCredentialStore, grok_home, api_key)?;
-    cache_key(Some(api_key.to_owned()));
-    Ok(())
+    save_and_cache_with(&SystemCredentialStore, grok_home, api_key)
 }
 
 pub fn delete_api_key() -> Result<(), ApiKeyStoreError> {
     let _operation = CREDENTIAL_OPERATION_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    cache_key(None);
     delete_with(&SystemCredentialStore)?;
+    cache_key(None);
     Ok(())
 }
 
@@ -161,8 +177,7 @@ pub fn delete_api_key_and_legacy(grok_home: &std::path::Path) -> Result<(), ApiK
     let _operation = CREDENTIAL_OPERATION_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    cache_key(None);
-    delete_all_with(&SystemCredentialStore, grok_home)
+    delete_all_and_clear_cache_with(&SystemCredentialStore, grok_home)
 }
 
 pub fn cached_api_key() -> Option<String> {
@@ -176,6 +191,8 @@ pub fn cached_api_key() -> Option<String> {
 mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Condvar, Mutex};
+
+    use serial_test::serial;
 
     use super::*;
 
@@ -426,5 +443,38 @@ mod tests {
         logout.join().unwrap().unwrap();
 
         assert_eq!(load_with(store.as_ref()).unwrap(), None);
+    }
+
+    #[test]
+    #[serial(api_key_cache)]
+    fn failed_replacement_keeps_previous_cached_key() {
+        let home = tempfile::tempdir().unwrap();
+        cache_key(Some("previous-key".to_string()));
+
+        let result = save_and_cache_with(
+            &MockStore::fail_with("save unavailable"),
+            home.path(),
+            "replacement-key",
+        );
+
+        assert!(result.is_err());
+        assert_eq!(cached_api_key().as_deref(), Some("previous-key"));
+        cache_key(None);
+    }
+
+    #[test]
+    #[serial(api_key_cache)]
+    fn failed_logout_keeps_previous_cached_key() {
+        let home = tempfile::tempdir().unwrap();
+        cache_key(Some("previous-key".to_string()));
+
+        let result = delete_all_and_clear_cache_with(
+            &MockStore::fail_with("delete unavailable"),
+            home.path(),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(cached_api_key().as_deref(), Some("previous-key"));
+        cache_key(None);
     }
 }

@@ -43,8 +43,6 @@ impl ModelFetchAuth {
             Self::Session
         } else if endpoints.deployment_key.is_some() {
             Self::Deployment
-        } else if crate::agent::auth_method::has_xai_api_key_env() {
-            Self::ApiKey
         } else {
             Self::Session
         }

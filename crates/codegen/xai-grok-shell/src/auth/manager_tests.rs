@@ -527,14 +527,8 @@ fn manager_collection_predicates_fail_directions() {
 
 #[test]
 fn token_suffix_matrix() {
-    let cases: &[(&str, &str)] = &[
-        ("abcdefghijklmnop", "efghijklmnop"), // takes last 12
-        ("short", "short"),                   // short unchanged
-        ("", ""),                             // empty
-        ("123456789012", "123456789012"),     // exact 12
-    ];
-    for (input, expected) in cases {
-        assert_eq!(token_suffix(input), *expected, "input={input:?}");
+    for input in ["abcdefghijklmnop", "short", "", "123456789012"] {
+        assert_eq!(token_suffix(input), "<redacted>", "input={input:?}");
     }
 }
 

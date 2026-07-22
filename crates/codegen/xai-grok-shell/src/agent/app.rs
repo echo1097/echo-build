@@ -479,7 +479,7 @@ async fn run_headless_inner(
         // Don't pre-resolve via try_ensure_session_noninteractive: run_auth_flow below
         // already mints external/devbox creds, so it would run the provider twice.
         let auth_manager = Arc::new(AuthManager::new(&grok_home::grok_home(), ctx.clone()));
-        if crate::agent::auth_method::has_xai_api_key_env()
+        if crate::auth::cached_api_key().is_some()
             && ctx.auth_provider_command.is_none()
             && crate::auth::try_ensure_fresh_auth(ctx).await.is_none()
         {

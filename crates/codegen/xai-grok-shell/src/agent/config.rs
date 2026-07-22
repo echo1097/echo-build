@@ -4282,10 +4282,7 @@ pub(crate) fn first_own_credential(
         .map(str::to_owned)
         .or_else(|| env_key.and_then(EnvKeys::resolve_value))
 }
-/// Resolve credentials for a model.
-/// Priority: model api_key/env_key > session token > XAI_API_KEY.
-///
-/// When `env_key` lists multiple names, the first set non-empty value is used.
+/// Resolve OpenRouter credentials from the secure process cache.
 pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> ResolvedCredentials {
     let info = model.info();
     #[cfg(test)]
@@ -4297,41 +4294,31 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
     #[cfg(not(test))]
     let test_session_key: Option<&str> = None;
 
-    let (api_key, base_url, auth_type) =
-        if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
-            let url = model
-                .api_base_url
-                .clone()
-                .unwrap_or_else(|| info.base_url.clone());
-            (Some(key), url, xai_chat_state::AuthType::ApiKey)
-        } else if let Some(key) = test_own_credential {
-            (
-                Some(key),
-                info.base_url.clone(),
-                xai_chat_state::AuthType::ApiKey,
-            )
-        } else if let Some(key) = test_session_key {
-            (
-                Some(key.to_owned()),
-                info.base_url.clone(),
-                xai_chat_state::AuthType::SessionToken,
-            )
-        } else {
-            if let Some(ref env_keys) = model.env_key
-                && !env_keys.is_empty()
-            {
-                tracing::warn!(
-                    model = % info.model, env_key = % env_keys,
-                    "model has env_key configured but none of the environment variables are set — \
-                     requests will have no API key",
-                );
-            }
-            (
-                None,
-                info.base_url.clone(),
-                xai_chat_state::AuthType::ApiKey,
-            )
-        };
+    let (api_key, base_url, auth_type) = if let Some(key) = crate::auth::cached_api_key() {
+        (
+            Some(key),
+            info.base_url.clone(),
+            xai_chat_state::AuthType::ApiKey,
+        )
+    } else if let Some(key) = test_own_credential {
+        (
+            Some(key),
+            info.base_url.clone(),
+            xai_chat_state::AuthType::ApiKey,
+        )
+    } else if let Some(key) = test_session_key {
+        (
+            Some(key.to_owned()),
+            info.base_url.clone(),
+            xai_chat_state::AuthType::SessionToken,
+        )
+    } else {
+        (
+            None,
+            info.base_url.clone(),
+            xai_chat_state::AuthType::ApiKey,
+        )
+    };
     let auth_scheme = info.auth_scheme;
     tracing::debug!(
         model = % info.model, auth_type = ? auth_type, "resolved credentials"
@@ -4489,8 +4476,7 @@ pub fn resolve_aux_model_sampling_config(
             return Some(sampler);
         }
     }
-    let xai_bearer = crate::agent::auth_method::read_xai_api_key_env().ok();
-    if let Some(bearer) = xai_bearer {
+    if let Some(bearer) = crate::auth::cached_api_key() {
         let entry = ModelEntry {
             info: ModelInfo {
                 user_selectable: true,
