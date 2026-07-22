@@ -120,7 +120,7 @@ cargo fmt --all               # rustfmt.toml at the repo root
 ## Contributing
 
 > [!NOTE]
-> External contributions are not accepted. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+> External contributions are not accepted at the moment
 
 ## License
 
