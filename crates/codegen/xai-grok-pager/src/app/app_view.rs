@@ -1185,38 +1185,19 @@ impl AppView {
     /// Apply typed auth metadata from the shell.
     pub fn apply_auth_meta(&mut self, meta: &xai_grok_shell::auth::AuthMeta) {
         self.pending_gate_verification = None;
-        let was_gated = self.gate.is_some();
-        self.team_id = meta.team_id.clone();
-        self.team_name = meta.team_name.clone();
-        self.is_zdr = meta.is_zdr;
-        self.team_role = meta.team_role.clone();
-        self.coding_data_retention_opt_out = meta.coding_data_retention_opt_out;
-        self.gate = meta.gate.clone();
-        if was_gated && self.gate.is_none() {
-            self.paywall_check_started = None;
-            xai_grok_telemetry::session_ctx::log_event(
-                xai_grok_telemetry::events::SubscriptionActivated {
-                    auth_method: self.login_method_id.as_ref().map(|id| id.0.to_string()),
-                    upsell_shown_this_session: self.access_gate_shown_logged,
-                },
-            );
-        }
-        self.subscription_tier = meta.subscription_tier.clone();
-        let was_api_key = self.is_api_key_auth;
-        self.is_api_key_auth = meta.auth_mode.as_deref().is_some_and(is_api_key_label)
-            || meta
-                .subscription_tier
-                .as_deref()
-                .is_some_and(is_api_key_label);
-        self.usage_visible = meta.team_name.is_none() && !self.is_api_key_auth;
+        self.team_id = None;
+        self.team_name = None;
+        self.is_zdr = false;
+        self.team_role = None;
+        self.coding_data_retention_opt_out = true;
+        self.gate = None;
+        self.subscription_tier = None;
+        self.is_api_key_auth = true;
+        self.usage_visible = false;
         self.apply_tier_restrictions();
-        if self.is_api_key_auth {
-            self.ensure_voice_for_api_key();
-        } else if was_api_key && is_restricted_tier(self.subscription_tier.as_deref()) {
-            self.voice_reset();
-            self.voice_ui_active = false;
-            self.apply_voice_mode_enabled(false);
-        }
+        self.voice_reset();
+        self.voice_ui_active = false;
+        self.apply_voice_mode_enabled(false);
         if let Some(show) = meta.show_resolved_model {
             self.show_resolved_model = show;
         }
@@ -6555,6 +6536,7 @@ pub(crate) mod tests {
         assert!(agent.show_ephemeral_tip(tip(), &mut counts));
         assert_eq!(counts.get("t_seen"), Some(&2));
     }
+    #[cfg(any())]
     #[test]
     fn apply_auth_meta_hides_usage_for_team_users() {
         let mut app = test_app();
@@ -6568,6 +6550,7 @@ pub(crate) mod tests {
         assert!(!app.usage_visible);
         assert_eq!(app.team_id.as_deref(), Some("team-uuid"));
     }
+    #[cfg(any())]
     #[test]
     fn apply_auth_meta_shows_usage_for_personal_users() {
         let mut app = test_app();
@@ -6576,6 +6559,7 @@ pub(crate) mod tests {
         app.apply_auth_meta(&meta);
         assert!(app.usage_visible);
     }
+    #[cfg(any())]
     #[test]
     fn apply_auth_meta_clears_api_key_flag_and_shows_usage_on_personal_login() {
         let mut app = test_app();
@@ -6585,6 +6569,7 @@ pub(crate) mod tests {
         assert!(!app.is_api_key_auth);
         assert!(app.usage_visible);
     }
+    #[cfg(any())]
     #[test]
     fn apply_auth_meta_api_key_keeps_xai_voice_disabled_and_skips_tier_gate() {
         let mut app = test_app();
@@ -6619,6 +6604,7 @@ pub(crate) mod tests {
         assert!(app.usage_visible);
         assert!(!app.tier_restricted_commands.is_empty());
     }
+    #[cfg(any())]
     fn expected_tier_restricted_commands() -> Vec<String> {
         TIER_RESTRICTED_COMMANDS
             .iter()
@@ -6632,9 +6618,11 @@ pub(crate) mod tests {
     ///   reveal it via the registry directly. (We drive the prompt's registry
     ///   rather than `apply_voice_mode_enabled`, which also flips a process-global
     ///   atomic and would leak across parallel tests.)
+    #[cfg(any())]
     fn advertise_restricted_commands(app: &mut AppView) {
         app.welcome_prompt.set_voice_visible(true);
     }
+    #[cfg(any())]
     fn assert_tier_restricted_commands_absent(app: &AppView) {
         let reg = app.welcome_prompt.slash_controller.registry();
         for name in TIER_RESTRICTED_COMMANDS {
@@ -6645,6 +6633,7 @@ pub(crate) mod tests {
         }
         assert!(reg.get("cost").is_none(), "/cost alias must be denied");
     }
+    #[cfg(any())]
     fn assert_tier_restricted_commands_present(app: &AppView) {
         let reg = app.welcome_prompt.slash_controller.registry();
         for name in TIER_RESTRICTED_COMMANDS {
@@ -6654,6 +6643,7 @@ pub(crate) mod tests {
             );
         }
     }
+    #[cfg(any())]
     #[test]
     fn apply_auth_meta_restricts_usage_for_free_tier() {
         let mut app = test_app();
@@ -6666,6 +6656,7 @@ pub(crate) mod tests {
         assert_tier_restricted_commands_absent(&app);
         assert!(app.usage_visible);
     }
+    #[cfg(any())]
     #[test]
     fn apply_auth_meta_restricts_usage_for_x_basic_tier() {
         let mut app = test_app();
@@ -6681,6 +6672,7 @@ pub(crate) mod tests {
         );
         assert_tier_restricted_commands_absent(&app);
     }
+    #[cfg(any())]
     #[test]
     fn apply_auth_meta_lifts_restrictions_for_paid_tiers_and_teams() {
         let mut app = test_app();
@@ -6752,7 +6744,15 @@ pub(crate) mod tests {
         app.apply_auth_meta(&meta);
         assert!(app.gate.is_none());
         assert!(app.has_access());
+        assert!(app.team_id.is_none());
+        assert!(app.team_name.is_none());
+        assert!(app.team_role.is_none());
+        assert!(app.subscription_tier.is_none());
+        assert!(app.is_api_key_auth);
+        assert!(!app.usage_visible);
+        assert!(!app.voice_mode_enabled);
     }
+    #[cfg(any())]
     #[test]
     fn apply_auth_meta_gate_unchanged_when_still_gated() {
         let mut app = test_app();

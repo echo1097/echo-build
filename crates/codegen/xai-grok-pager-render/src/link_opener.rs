@@ -64,6 +64,11 @@ pub fn browser_unavailable_message(url: &str) -> String {
 /// **Callers handling untrusted input** should call [`is_safe_to_open`]
 /// first, or use [`open_url_if_safe`] / [`try_open_url`] which combine both.
 pub fn open_url(url: &str) -> bool {
+    if is_removed_product_url(url) {
+        tracing::warn!(url, "refusing to open removed xAI product URL");
+        return false;
+    }
+
     // Test seam: PTY e2e must observe the open without launching a real
     // browser. When set, append the URL to the file and skip the OS opener.
     if let Ok(path) = std::env::var("GROK_TEST_OPEN_URL_FILE") {
@@ -121,6 +126,18 @@ pub fn open_url(url: &str) -> bool {
             false
         }
     }
+}
+
+/// xAI product destinations are not part of the Echo product surface.
+pub fn is_removed_product_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+
+    host == "x.ai" || host.ends_with(".x.ai") || host == "grok.com" || host.ends_with(".grok.com")
 }
 
 /// Build the `open`/`xdg-open` opener command (macOS / Linux / BSD).
@@ -582,5 +599,21 @@ mod tests {
             try_open_url("javascript:alert(1)", SchemeFilter::Standard),
             OpenUrlResult::RejectedScheme
         );
+    }
+
+    #[test]
+    fn removed_product_origins_are_blocked() {
+        for url in [
+            "https://grok.com/supergrok",
+            "https://code.grok.com/session",
+            "https://x.ai/account",
+            "https://docs.x.ai/build/overview",
+        ] {
+            assert!(is_removed_product_url(url), "url={url}");
+        }
+        assert!(!is_removed_product_url(
+            "https://openrouter.ai/settings/keys"
+        ));
+        assert!(!is_removed_product_url("https://example.com"));
     }
 }

@@ -7,11 +7,8 @@ use xai_grok_shell::util::grok_home::grok_home;
 
 #[derive(Debug, clap::Args, Clone)]
 pub struct TraceArgs {
-    /// Session ID to export/upload
+    /// Session ID to export
     pub session_id: String,
-    /// Save locally only, skip remote upload
-    #[arg(long)]
-    pub local: bool,
     /// Output path (default: $GROK_HOME/trace-exports/<session-id>.tar.gz)
     #[arg(short, long)]
     pub output: Option<PathBuf>,
@@ -33,38 +30,7 @@ struct TraceResult {
 }
 
 pub async fn run(args: TraceArgs, agent_config: &AgentConfig) -> Result<()> {
-    if args.local {
-        return run_export(
-            &args.session_id,
-            args.output.as_deref(),
-            args.json,
-            agent_config,
-        )
-        .await;
-    }
-
-    if !agent_config.is_trace_upload_enabled() {
-        tracing::warn!(
-            session_id = %args.session_id,
-            "trace_cmd: trace uploads disabled in config"
-        );
-        if !args.json {
-            eprintln!(
-                "Trace uploads disabled. Set [telemetry] trace_upload = true in {}",
-                crate::util::display_user_grok_path("config.toml")
-            );
-            eprintln!("Falling back to local export.");
-        }
-        return run_export(
-            &args.session_id,
-            args.output.as_deref(),
-            args.json,
-            agent_config,
-        )
-        .await;
-    }
-
-    run_upload(
+    run_export(
         &args.session_id,
         args.output.as_deref(),
         args.json,
@@ -407,6 +373,7 @@ async fn run_export(
 // ---------------------------------------------------------------------------
 
 /// Prints upload URL to stdout on success; saves local bundle and returns Err on failure.
+#[allow(dead_code)] //compat implementation has no Echo command path
 async fn run_upload(
     session_id: &str,
     output: Option<&Path>,
@@ -606,8 +573,10 @@ impl UploadAttempt<'_> {
 // Upload with retries
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+#[allow(dead_code)] //compat implementation has no Echo command path
 async fn upload_with_retries(
     config: &xai_grok_shell::session::repo_changes::TraceExportConfig,
     object_path: &str,

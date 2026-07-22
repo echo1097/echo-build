@@ -56,13 +56,8 @@ pub struct IdentityAttrs {
 }
 
 impl IdentityAttrs {
-    pub fn from_snapshot(snapshot: &xai_grok_auth::CredentialSnapshot) -> Self {
-        Self {
-            user_id: snapshot.user_id.clone(),
-            organization_id: snapshot.organization_id.clone(),
-            team_id: snapshot.team_id.clone(),
-            deployment_id: snapshot.deployment_id.clone(),
-        }
+    pub fn from_snapshot(_snapshot: &xai_grok_auth::CredentialSnapshot) -> Self {
+        Self::default()
     }
 }
 
@@ -186,9 +181,11 @@ fn build_handle(cfg: ExternalOtelConfig) -> Option<Arc<ExternalTelemetry>> {
         source: cfg.enabled_source,
     };
 
-    tracing::debug!(
+    tracing::info!(
         metrics_exporter = configured_meta.metrics_exporter,
         logs_exporter = configured_meta.logs_exporter,
+        logs_endpoint = configured_meta.logs_endpoint_origin,
+        metrics_endpoint = configured_meta.metrics_endpoint_origin,
         "external otel: stream active"
     );
 

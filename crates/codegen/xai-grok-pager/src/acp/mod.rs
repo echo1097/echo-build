@@ -91,7 +91,7 @@ pub struct AcpConnection {
     /// disabled feature produces zero `x.ai/recap` traffic. Defaults to `false`
     /// when absent (e.g. an older shell that predates the feature).
     pub session_recap_available: bool,
-    /// `AuthManager` for pager-side authenticated channels (voice STT/TTS).
+    /// `AuthManager` retained for compatibility with the in-process transport.
     ///
     /// In-process mode shares the agent's instance (single token cache); leader
     /// mode builds a dedicated one off the same local `auth.json`. Either way it

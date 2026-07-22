@@ -99,14 +99,10 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(plugin::PluginsCommand),
         Arc::new(plugin::MarketplaceCommand),
         Arc::new(plugin::SkillsCommand),
-        Arc::new(share::ShareCommand),
-        Arc::new(session_info::SessionInfoCommand),
         Arc::new(rename::RenameCommand),
         Arc::new(dashboard::DashboardCommand),
         Arc::new(cd::CdCommand),
         Arc::new(theme::ThemeCommand),
-        Arc::new(feedback::FeedbackCommand),
-        Arc::new(announcements::AnnouncementsCommand),
         Arc::new(remember::RememberCommand),
         Arc::new(plan::PlanCommand),
         Arc::new(auth::AuthCommand),
@@ -115,19 +111,16 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(btw::BtwCommand),
         Arc::new(recap::RecapCommand),
         Arc::new(terminal_setup::TerminalSetupCommand),
-        Arc::new(voice::VoiceCommand),
         Arc::new(loop_cmd::LoopCommand),
         Arc::new(timestamps::TimestampsCommand),
         Arc::new(timeline::TimelineCommand),
         Arc::new(toggle_mouse_reporting::ToggleMouseReportingCommand),
         Arc::new(settings_cmd::SettingsCommand),
-        Arc::new(privacy::PrivacyCommand),
         Arc::new(rewind::RewindCommand),
         Arc::new(jump::JumpCommand),
         Arc::new(login::LoginCommand),
         Arc::new(logout::LogoutCommand),
         Arc::new(import_claude::ImportClaudeCommand),
-        Arc::new(usage::UsageCommand),
         Arc::new(queue::QueueCommand),
         Arc::new(tasks::TasksCommand),
         Arc::new(release_notes::ReleaseNotesCommand),
@@ -204,6 +197,22 @@ mod tests {
             "/vim-mode should be registered"
         );
         assert!(reg.get("find").is_some(), "/find should be registered");
+    }
+
+    #[test]
+    fn removed_product_commands_are_not_advertised() {
+        let reg = CommandRegistry::new(builtin_commands());
+        for command in [
+            "usage",
+            "share",
+            "feedback",
+            "announcements",
+            "voice",
+            "privacy",
+            "session-info",
+        ] {
+            assert!(reg.get(command).is_none(), "command={command}");
+        }
     }
     #[test]
     fn loop_command_declares_scheduler_tool_requirement() {
@@ -542,14 +551,6 @@ mod tests {
         assert!(!cmd.usage().is_empty());
     }
     #[test]
-    fn usage_registered_in_builtin_commands() {
-        let reg = CommandRegistry::new(builtin_commands());
-        assert!(
-            reg.get("usage").is_some(),
-            "/usage should be registered in builtins"
-        );
-    }
-    #[test]
     fn imagine_commands_are_not_registered() {
         let reg = CommandRegistry::new(builtin_commands());
         assert!(reg.get("imagine").is_none());
@@ -578,12 +579,6 @@ mod tests {
             reg.get("tasks").is_some(),
             "/tasks should be registered in builtins"
         );
-    }
-    #[test]
-    fn cost_aliases_usage() {
-        let reg = CommandRegistry::new(builtin_commands());
-        let cost = reg.get("cost").expect("/cost should resolve");
-        assert_eq!(cost.name(), "usage", "/cost must alias /usage");
     }
     #[test]
     fn debug_is_registered_and_executable() {
@@ -676,17 +671,5 @@ mod tests {
         assert!(reg.get("recap").is_some());
         reg.set_recap_visible(false);
         assert!(reg.get("recap").is_none());
-    }
-    #[test]
-    fn voice_hidden_by_default_in_registry_until_revealed() {
-        let mut reg = CommandRegistry::new(builtin_commands());
-        assert!(
-            reg.get("voice").is_none(),
-            "/voice must be fail-closed until set_voice_visible(true)"
-        );
-        reg.set_voice_visible(true);
-        assert!(reg.get("voice").is_some());
-        reg.set_voice_visible(false);
-        assert!(reg.get("voice").is_none());
     }
 }

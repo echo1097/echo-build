@@ -51,9 +51,7 @@ pub async fn spawn_grok_shell(
     // re-login). No-op where the OS listener is unavailable.
     auth_manager.start_system_power_listener();
 
-    // Best-effort refresh of managed policy before bootstrap reads it (repairs a wrong-identity/missing
-    // cache). Never errors — the OS-protected system/MDM layers still apply.
-    xai_grok_shell::managed_config::ensure_managed_policy_present(&auth_manager).await;
+    // Echo has no managed-policy backend. Local configuration remains authoritative.
 
     // Run the full bootstrap sequence: config resolution, process-level
     // singletons (including `extract_bundled_files` which writes compiled-in

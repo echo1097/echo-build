@@ -836,7 +836,7 @@ pub(crate) async fn run(
         .as_deref()
         .map(agent_client_protocol::ModelId::new);
     app.cli_effort_token = args.reasoning_effort.clone();
-    app.auth_use_oauth = args.oauth;
+    app.auth_use_oauth = false;
     app.show_resolved_model = remote_settings
         .as_ref()
         .and_then(|s| s.show_resolved_model)
@@ -918,11 +918,8 @@ pub(crate) async fn run(
         }
     }
 
-    // After auth so API-key + managed policy resolve correctly.
-    let voice_mode_enabled = crate::app::resolve_voice_mode_live(
-        remote_settings.as_ref().and_then(|s| s.voice_mode_enabled),
-        app.is_api_key_auth,
-    );
+    // Echo has no voice backend. Keep the inherited implementation unreachable.
+    let voice_mode_enabled = false;
     if !voice_mode_enabled {
         app.voice_reset();
         app.voice_ui_active = false;
