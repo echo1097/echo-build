@@ -7,6 +7,7 @@ headlessly for scripting/CI, or embedded in editors via the Agent Client
 Protocol (ACP).
 
 [Building from source](#building-from-source) ·
+[Authentication](#authentication) ·
 [Documentation](#documentation) ·
 [Repository layout](#repository-layout) ·
 [Development](#development) ·
@@ -50,15 +51,37 @@ cargo build -p xai-grok-pager-bin --release --bin echo-build
 cargo check -p xai-grok-pager-bin
 ```
 
-The binary artifact is `target/release/echo-build`. On first launch, the TUI
-asks for an OpenRouter API key and stores it only in the operating-system
-credential store. It does not start browser, device-code, or Grok account
-authentication. See the
-[authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
+The binary artifact is `target/release/echo-build`.
 
 User state defaults to `~/.echo-build`. Set `ECHO_BUILD_HOME` to override it.
 `GROK_HOME` and selected `GROK_*` environment aliases are compatibility-only
 through the 0.2 release line and are scheduled for removal in 0.3.0.
+
+## Authentication
+
+On first launch, the TUI asks for an OpenRouter API key. Echo Build stores the
+key only in the operating-system credential store and keeps a non-persistent
+in-memory copy while the process is running.
+
+- Browser login, device-code login, OIDC, Grok subscriptions, and cached Grok
+  sessions are not supported authentication methods.
+- Environment variables and per-model `api_key` / `env_key` settings are not
+  OpenRouter credential sources. Catalog responses also cannot override the
+  API key, request headers, or OpenRouter base URL.
+- Saving a replacement key updates the running process only after secure
+  persistence succeeds. Empty keys are rejected without changing the current
+  credential.
+- `logout` and `clear key` perform the same idempotent operation: they remove
+  the persistent key and its in-memory copy.
+- If OpenRouter rejects a request with HTTP 401, the TUI returns to the same
+  supported OpenRouter key-entry flow. It never falls back to browser login.
+- ACP authentication status and info responses expose only whether a key is
+  configured; the key itself is never returned.
+
+If the operating-system credential store is unavailable, Echo Build fails
+closed and sampling remains blocked. See the
+[authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md)
+for the interactive, headless, and ACP flows.
 
 ## Documentation
 
