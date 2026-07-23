@@ -23,8 +23,27 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install Gitleaks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64) platform="darwin_arm64" ;;
+            Linux-x86_64) platform="linux_x64" ;;
+            *) echo "unsupported Gitleaks platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+          esac
+
+          archiveName="gitleaks_${GITLEAKS_VERSION}_${platform}.tar.gz"
+          gh release download "v${GITLEAKS_VERSION}" \
+            --repo gitleaks/gitleaks \
+            --pattern "$archiveName" \
+            --dir "$RUNNER_TEMP"
+          tar -xzf "$RUNNER_TEMP/$archiveName" -C "$RUNNER_TEMP" gitleaks
       - name: Reject committed secrets
-        uses: gitleaks/gitleaks-action@v2
+        run: |
+          set -o pipefail
+          "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --verbose 2>&1 | tee gitleaks.log
       - name: Test source installer
         run: |
           set -o pipefail
