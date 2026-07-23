@@ -1,0 +1,25 @@
+title = "Echo Build secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic credentials used by committed unit tests"
+targetRules = ["generic-api-key", "jwt"]
+regexes = [
+  '''secret-key-12345''',
+  '''eyJhbGciOiJFUzI1NiJ9\.test''',
+  '''eyJhbGciOiJFUzI1NiJ9\.tok''',
+  '''xai-plainkey''',
+  '''xai-old''',
+  '''eyJ\.old''',
+  '''eyJ\.new''',
+  '''eyJ\.z''',
+  '''eyJ\.a''',
+  '''eyJ\.a-new''',
+  '''eyJ\.tok''',
+  '''0123456789abcdefghijABCDEFGHIJ012345''',
+  '''sk-CANARYabcdefghij1234567890''',
+  '''3C41A7D9-6B58-4E2F-A0D3-5F8C1B7E0A02''',
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.SflKxwRJSMeKKF2QT4f''',
+]

@@ -338,16 +338,16 @@ pub fn now_epoch_secs() -> i64 {
 }
 
 pub fn resolve_grok_home() -> Result<PathBuf> {
-    if let Ok(v) = std::env::var("ECHO_BUILD_HOME") {
-        if !v.is_empty() {
-            return Ok(PathBuf::from(v));
-        }
+    if let Ok(echo_home) = std::env::var("ECHO_BUILD_HOME")
+        && !echo_home.is_empty()
+    {
+        return Ok(PathBuf::from(echo_home));
     }
-    if let Ok(v) = std::env::var("GROK_HOME") {
-        if !v.is_empty() {
-            tracing::warn!("GROK_HOME is deprecated; use ECHO_BUILD_HOME (support ends in 0.3.0)");
-            return Ok(PathBuf::from(v));
-        }
+    if let Ok(grok_home) = std::env::var("GROK_HOME")
+        && !grok_home.is_empty()
+    {
+        tracing::warn!("GROK_HOME is deprecated; use ECHO_BUILD_HOME (support ends in 0.3.0)");
+        return Ok(PathBuf::from(grok_home));
     }
     let home = PathBuf::from(
         std::env::var("HOME").context("none of $ECHO_BUILD_HOME, $GROK_HOME, or $HOME is set")?,

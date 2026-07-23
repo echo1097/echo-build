@@ -59,9 +59,9 @@ pub fn fmt_context_window(n: u64) -> String {
     const KIB: u64 = 1_024;
     const MIB: u64 = 1_048_576;
 
-    if n >= MIB && n % MIB == 0 {
+    if n >= MIB && n.is_multiple_of(MIB) {
         format!("{}M", n / MIB)
-    } else if n >= KIB && (n.is_power_of_two() || n % BINARY_BLOCK == 0) {
+    } else if n >= KIB && (n.is_power_of_two() || n.is_multiple_of(BINARY_BLOCK)) {
         format!("{}K", n / KIB)
     } else {
         fmt_tokens(n)

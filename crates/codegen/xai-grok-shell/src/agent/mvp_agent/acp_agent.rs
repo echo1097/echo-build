@@ -269,19 +269,19 @@ impl acp::Agent for MvpAgent {
         match arguments.method_id.0.as_ref() {
             auth_method::OPENROUTER_API_KEY_METHOD_ID
             | auth_method::LEGACY_XAI_API_KEY_METHOD_ID => {
-                let mut sampling_config = self.sampling_config.borrow_mut();
-                if sampling_config.api_key.is_none() {
-                    if let Some(api_key) = crate::auth::cached_api_key() {
-                        sampling_config.api_key = Some(api_key);
-                    } else {
-                        emit_login_span(false, "api_key", None, Some("no_credentials"));
-                        return Err(
-                            acp::Error::auth_required()
-                                .data("Add an OpenRouter API key to the secure credential store."),
-                        );
+                {
+                    let mut sampling_config = self.sampling_config.borrow_mut();
+                    if sampling_config.api_key.is_none() {
+                        if let Some(api_key) = crate::auth::cached_api_key() {
+                            sampling_config.api_key = Some(api_key);
+                        } else {
+                            emit_login_span(false, "api_key", None, Some("no_credentials"));
+                            return Err(acp::Error::auth_required().data(
+                                "Add an OpenRouter API key to the secure credential store.",
+                            ));
+                        }
                     }
                 }
-                drop(sampling_config);
                 self.set_auth_method(arguments.method_id.clone());
                 self.sync_process_static_api_key(None);
                 self.models_manager.on_auth_changed().await;

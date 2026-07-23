@@ -3,6 +3,7 @@
 //! This module provides a shared `RelayConnection` that handles the WebSocket
 //! connection to the grok.com relay server with automatic reconnection.
 //! It is used by both `run_headless` and `run_leader` modes to avoid code duplication.
+#![allow(clippy::possible_missing_else)]
 use super::proxy;
 use crate::auth::{GrokAuth, GrokComConfig};
 use crate::{teprintln, tprintln};

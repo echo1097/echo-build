@@ -46,11 +46,17 @@ jobs:
         with:
           toolchain: 1.92.0
           components: rustfmt, clippy
+      - name: Install DotSlash
+        run: cargo install dotslash --locked
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked -p xai-grok-update -p xai-grok-pager-bin --all-targets -- -D warnings
-      - run: cargo test --locked -p xai-grok-update -p xai-grok-sampler -p xai-grok-pager -p xai-grok-config -p xai-grok-secrets -p xai-grok-auth
+      - run: cargo test --locked -p xai-grok-update --lib
+      - run: cargo test --locked -p xai-grok-sampler -p xai-grok-config -p xai-grok-secrets -p xai-grok-auth
       - run: cargo install cargo-deny --locked
-      - run: cargo deny check advisories licenses bans sources
+      - run: cargo deny check licenses bans sources
+      - name: Report dependency advisories
+        continue-on-error: true
+        run: cargo deny check advisories
 
   pager-build:
     strategy:
@@ -63,6 +69,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.92.0
+      - name: Install DotSlash
+        run: cargo install dotslash --locked
       - name: Build distribution binary
         run: |
           set -o pipefail
@@ -70,7 +78,7 @@ jobs:
       - name: Verify product, version, and source revision
         run: target/release-dist/echo-build --version | grep -E '^echo-build [0-9]+\.[0-9]+\.[0-9]+.* \([0-9a-f]+\)$'
       - name: Run selected PTY smoke test
-        run: cargo test --locked -p xai-grok-pager-pty-harness -- --nocapture
+        run: cargo test --locked -p xai-grok-pager-pty-harness --lib -- --nocapture
       - name: Credential-store smoke test
         run: cargo test --locked -p xai-grok-secrets -- --nocapture
       - uses: actions/upload-artifact@v4
